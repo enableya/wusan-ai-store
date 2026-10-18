@@ -10,7 +10,8 @@ export default function SupportPage() {
     <PageHeading title="联系支持" eyebrow="LET'S TALK" description="订阅前的疑问，或订阅后的问题，我们都重视。" />
     <div className="support-layout"><div className="support-info"><div className="support-symbol"><Icon name="headphones" /></div><h2>先把问题说清楚</h2>
       <p>{site.supportEmail ? '可以通过下方邮箱咨询，也可以先通过帮助中心了解套餐、订单和账号安全事项。' : '客服渠道正在准备中。你可以先通过帮助中心了解套餐、订单和账号安全事项。'}</p>
-      <dl className="spec-list"><div><dt>客服邮箱</dt><dd>{site.supportEmail ? <a href={`mailto:${site.supportEmail}`}>{site.supportEmail}</a> : '待配置'}</dd></div><div><dt>服务时间</dt><dd>待确认</dd></div><div><dt>预计响应时间</dt><dd>待确认</dd></div></dl>
+      <dl className="spec-list"><div><dt>经营主体</dt><dd>{site.merchantName || '待配置'}</dd></div><div><dt>客服邮箱</dt><dd>{site.supportEmail ? <a href={`mailto:${site.supportEmail}`}>{site.supportEmail}</a> : '待配置'}</dd></div><div><dt>服务时间</dt><dd>{site.supportHours || '待确认'}</dd></div><div><dt>预计响应时间</dt><dd>{site.supportResponseTime || '待确认'}</dd></div></dl>
+      <p className="field-hint">支付问题请准备订单号、支付宝交易号与问题说明。请先在订单页查询结果，勿重复付款；在线退款暂未接入。</p>
       <Link className="text-button" to="/help">前往帮助中心 <Icon name="arrow-right" /></Link>
     </div>
     <form className="support-form" onSubmit={(event) => event.preventDefault()}><h2>咨询与售后</h2><Notice subtle>咨询受理暂未开放，以下内容不会提交。</Notice>

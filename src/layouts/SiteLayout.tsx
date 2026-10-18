@@ -28,12 +28,12 @@ export default function SiteLayout() {
   const catalogActive = pathname === '/' || pathname.startsWith('/products/') || pathname.startsWith('/checkout/');
   const items = [
     { to: '/', label: '订阅套餐', active: catalogActive },
-    { to: '/orders', label: '我的订单', active: pathname.startsWith('/orders') },
+    { to: '/orders', label: '我的订单', active: pathname.startsWith('/orders') || pathname.startsWith('/pay/') },
     { to: '/help', label: '帮助中心', active: pathname.startsWith('/help') },
   ];
   return <>
     <a className="skip-link" href="#main" onClick={(event) => { event.preventDefault(); main.current?.focus(); main.current?.scrollIntoView(); }}>跳转到主要内容</a>
-    <header className="site-header"><div className="container header-inner">
+    <header className={`site-header${pathname === '/' ? ' storefront-header' : ''}`}><div className="container header-inner">
       <Brand /><nav className="desktop-nav" aria-label="主导航">
         {items.map((item) => <Link key={item.to} to={item.to} className={item.active ? 'active' : ''} aria-current={item.active ? 'page' : undefined}>{item.label}</Link>)}
       </nav>
@@ -47,11 +47,11 @@ export default function SiteLayout() {
       <Link to="/support" onClick={() => setMobileOpen(false)}>联系支持</Link>
     </nav></header>
     <main id="main" tabIndex={-1} ref={main}><Outlet /></main>
-    <footer className="site-footer"><div className="container footer-top">
+    {pathname === '/' ? <footer className="storefront-footer"><div className="container"><span>© 2026 {site.name}</span><nav aria-label="服务说明"><Link to="/terms">服务须知</Link><Link to="/privacy">隐私说明</Link><Link to="/support">联系支持</Link></nav><small>独立服务站点，非 OpenAI 官方网站。</small></div></footer> : <footer className="site-footer"><div className="container footer-top">
       <div><Brand /><p>独立的 AI 订阅服务站点。<br />把时间，留给真正重要的事。</p></div>
       <div className="footer-group"><h3>订阅服务</h3><Link to="/">全部套餐</Link><Link to="/orders">我的订单</Link><Link to="/help/getting-started">购买指南</Link></div>
       <div className="footer-group"><h3>帮助与支持</h3><Link to="/help">帮助中心</Link><Link to="/support">联系支持</Link><Link to="/help/account-safety">账号安全</Link></div>
       <div className="footer-group"><h3>服务说明</h3><Link to="/terms">服务须知</Link><Link to="/privacy">隐私说明</Link><span className="muted">简体中文 · 人民币 CNY</span></div>
-    </div><div className="container footer-bottom"><span>© 2026 {site.name}</span><span>非 OpenAI 官方网站，品牌名称归相应权利人所有。</span><span>经营主体信息待配置</span></div></footer>
+    </div><div className="container footer-bottom"><span>© 2026 {site.name}</span><span>非 OpenAI 官方网站，品牌名称归相应权利人所有。</span><span>{site.merchantName || '经营主体信息待配置'}</span></div></footer>}
   </>;
 }

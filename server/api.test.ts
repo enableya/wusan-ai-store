@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createApiServer } from './app.ts';
 import { catalogRepository, openDatabase } from './database.ts';
+import * as oldContent from './seed/content-v2.ts';
 import type { Article, Faq, HomeData, Product } from '../src/types/catalog.ts';
 
 async function setup(t: TestContext) {
@@ -95,9 +96,9 @@ test('missing or unpublished products are not exposed', async (t) => {
   assert.equal((await get<HomeData>('/api/home')).body.data.products.length, 3);
 });
 
-test('API never accepts public product, order or payment writes', async (t) => {
+test('API never accepts public product or unsupported payment writes', async (t) => {
   const { base, get } = await setup(t);
-  for (const path of ['/api/products', '/api/products/chatgpt-plus', '/api/orders', '/api/payments']) {
+  for (const path of ['/api/products', '/api/products/chatgpt-plus', '/api/payments']) {
     const response = await fetch(base + path, { method: 'POST', body: '{"priceCents":1,"email":"private@example.com"}' });
     assert.equal(response.status, 405);
     assert.equal(response.headers.get('allow'), 'GET, HEAD');
@@ -151,5 +152,32 @@ test('database rejects invalid prices and selectable products without a price', 
   const { db } = await setup(t);
   for (const price of [-1, 0, 1.5, null]) {
     assert.throws(() => db.prepare('UPDATE products SET price_cents = ? WHERE id = ?').run(price, 'chatgpt-plus'));
+  }
+});
+
+test('payment migration updates unchanged built-in copy and preserves merchant edits', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'wusan-migration-'));
+  const filename = join(directory, 'test.sqlite');
+  let db = openDatabase(filename);
+  try {
+    const home = { ...oldContent.home, hero: { ...oldContent.home.hero, title: 'Merchant title' } };
+    const faqs = oldContent.faqs.map((faq, index) => index === 0 ? { ...faq, answer: 'Merchant answer' } : faq);
+    for (const [key, value] of [['home', home], ['faqs', faqs], ['articles', oldContent.articles]]) {
+      db.prepare('UPDATE content SET value = ? WHERE key = ?').run(JSON.stringify(value), key as string);
+    }
+    db.exec('PRAGMA user_version = 2');
+    db.close();
+    db = openDatabase(filename);
+    const catalog = catalogRepository(db);
+    assert.equal(catalog.home().hero.title, 'Merchant title');
+    assert.match(catalog.home().steps[2].description, /支付宝/);
+    assert.equal(catalog.faqs()[0].answer, 'Merchant answer');
+    assert.match(catalog.faqs()[1].answer, /支付宝网站支付/);
+    assert.match(catalog.articles()[0].sections[3].text, /支付宝官方收银台/);
+    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 5);
+  } finally {
+    db.close();
+    for (const suffix of ['', '-wal', '-shm']) rmSync(filename + suffix, { force: true });
+    rmdirSync(directory);
   }
 });

@@ -7,6 +7,8 @@ import { usePageTitle } from '../hooks/usePageTitle';
 import { useApiResource } from '../hooks/useApiResource';
 import { ApiState } from '../components/ApiState';
 import type { Article, Product } from '../types/catalog';
+import type { PaymentConfig } from '../types/orders';
+import { trackProductClick } from '../services/analytics';
 
 const tabs = [
   { id: 'overview', label: '套餐介绍' },
@@ -23,7 +25,7 @@ function ProductPanel({ product, tab }: { product: Product; tab: TabId }) {
     <Link className="text-button" to="/help/getting-started">打开完整购买指南 <Icon name="arrow-right" /></Link>
   </>;
   if (tab === 'notes') return <>
-    <h2>购买前，请先确认</h2><Notice>正式交易暂未开放，当前不会收款或提供订阅交付。</Notice>
+    <h2>购买前，请先确认</h2><Notice>支付通过支付宝完成，支付结果与订阅交付分别处理。付款前请确认服务条件及实际收款方。</Notice>
     <ul className="article-list"><li>展示金额为本站实际售价，套餐名称不表示官方定价或授权认可。</li><li>账号、地区及购买资格以上线前最终确认为准。</li><li>交付方式、预计时限、售后期与退款规则尚待确认。</li><li>不要求提供账号密码、完整 Session 或多因素验证码。</li></ul>
     <Link className="text-button" to="/terms">阅读服务须知 <Icon name="arrow-right" /></Link>
   </>;
@@ -47,9 +49,11 @@ export default function ProductPage() {
   const { productId } = useParams();
   const resource = useApiResource<Product>(productId ? `/products/${encodeURIComponent(productId)}` : null);
   const product = resource.data;
+  const payment = useApiResource<PaymentConfig>('/payments/config');
   const [tab, setTab] = useState<TabId>('overview');
   usePageTitle(product?.name || '套餐不存在');
   useEffect(() => { setTab('overview'); }, [productId]);
+  useEffect(() => { if (product && product.id === productId) void trackProductClick(product.id); }, [product?.id, productId]);
   if (resource.error?.status === 404) return <EmptyPage title="套餐不存在或已下架" description="这个链接没有对应的订阅套餐，可以回到目录继续浏览。" button="查看全部套餐" to="/" icon="package-x" />;
   if (!product) return <ApiState error={resource.error} retry={resource.reload} title="正在加载套餐详情" />;
   return <div className="container page-space">
@@ -73,9 +77,9 @@ export default function ProductPage() {
     <aside className="purchase-panel" aria-label="套餐选择"><div className="panel-top"><h2>订阅方案</h2><StatusBadge product={product} /></div>
       <div className="purchase-price"><Price product={product} /></div><span className="field-label">订阅周期</span>
       <div className="period-choice"><Icon name="calendar-days" /><span>{product.periodMonths} 个月<small>月度订阅</small></span><Icon name="circle-check" /></div>
-      <dl className="purchase-specs"><div><dt>数量</dt><dd>1 份</dd></div><div><dt>服务对象</dt><dd>个人账号</dd></div><div><dt>当前状态</dt><dd>在线下单未开放</dd></div></dl>
+      <dl className="purchase-specs"><div><dt>数量</dt><dd>1 份</dd></div><div><dt>服务对象</dt><dd>个人账号</dd></div><div><dt>支付方式</dt><dd>{payment.data?.enabled ? payment.data.environment === 'sandbox' ? '支付宝 · 沙箱测试' : '支付宝' : payment.error ? '暂时无法获取' : payment.loading ? '正在确认…' : '支付宝待配置'}</dd></div></dl>
       {product.selectable ? <Link className="button primary full-width" to={`/checkout/${product.id}`}>核对订阅信息 <Icon name="arrow-right" /></Link> : <button className="button full-width" type="button" disabled>暂未开放选择</button>}
-      <p className="panel-footnote"><Icon name="lock-keyhole" />当前不会产生真实订单或收款</p>
+      <p className="panel-footnote"><Icon name="lock-keyhole" />{payment.data?.enabled ? '服务器核对金额，支付宝确认付款' : '支付配置完成后开放下单，可先保存套餐清单'}</p>
       <div className="panel-support">对这个方案有疑问？<Link to="/support">联系支持 <Icon name="arrow-up-right" /></Link></div>
     </aside></div>
   </div>;

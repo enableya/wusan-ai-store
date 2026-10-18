@@ -29,16 +29,16 @@ export function SmallProductIcon({ product }: { product?: Product }) {
 }
 
 export function ProductCard({ product }: { product: Product }) {
-  return <article className={`product-card ${product.id === 'chatgpt-plus' ? 'featured' : ''}`}>
-    <ProductArt product={product} /><div className="product-body">
-      <div className="product-title-line"><span className="category-caption">{product.category} 订阅</span><StatusBadge product={product} /></div>
+  const covers: Record<string, string> = {
+    'chatgpt-plus': 'chatgpt-plus.svg', 'chatgpt-pro-5x': 'chatgpt-pro-5x.svg',
+    'chatgpt-pro-20x': 'chatgpt-pro-20x.svg', 'chatgpt-pro-50x-ph': 'chatgpt-pro-50x.svg',
+  };
+  return <article className="product-card storefront-card">
+    <Link className="storefront-cover" to={`/products/${product.id}`} tabIndex={-1} aria-hidden="true"><img src={`/products/${covers[product.id] || 'subscription.svg'}`} width="800" height="540" alt="" /></Link>
+    <div className="product-body">
       <h3><Link to={`/products/${product.id}`}>{product.name}</Link></h3>
-      <p className="product-description">{product.audience}</p>
-      <div className="card-price"><Price product={product} /></div>
-      <ul className="feature-list">{product.features.map((feature) => <li key={feature}><Icon name="check" />{feature}</li>)}</ul>
-      <Link className={`button ${product.id === 'chatgpt-plus' ? 'primary' : 'secondary'} full-width`} to={`/products/${product.id}`}>
-        查看套餐 <Icon name="arrow-right" />
-      </Link>
+      <div className="card-price">{product.priceCents === null ? <span className="storefront-pending-price">价格待确认</span> : <span className="price"><span className="currency">¥</span>{money(product.priceCents)}<small> / {product.periodMonths === 1 ? '月' : `${product.periodMonths} 个月`}</small></span>}</div>
+      <Link className="button secondary full-width" to={`/products/${product.id}`}>查看详情</Link>
     </div>
   </article>;
 }

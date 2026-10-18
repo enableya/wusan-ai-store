@@ -11,6 +11,7 @@ server.on('error', (error) => {
 });
 server.listen(config.port, config.host, () => {
   console.log(`Wusan API: http://${config.host}:${config.port}/api/health`);
+  if (process.send) process.send({ type: 'ready' });
 });
 
 let stopping = false;

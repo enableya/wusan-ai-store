@@ -9,3 +9,6 @@ artifacts/
 .npm-cache/
 .env
 server/data/
+/.alipay-sandbox.json
+
+/alipayPublicKey_RSA2.txt

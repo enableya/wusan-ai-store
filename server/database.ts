@@ -4,6 +4,8 @@ import { DatabaseSync } from 'node:sqlite';
 import type { Article, Faq, HomeContent, Product } from '../src/types/catalog.ts';
 import { products } from './seed/catalog.ts';
 import { articles, faqs, home } from './seed/content.ts';
+import * as previousContent from './seed/content-v2.ts';
+import { migrateContent } from './content-migration.ts';
 
 export function openDatabase(filename: string) {
   if (filename !== ':memory:') mkdirSync(dirname(filename), { recursive: true });
@@ -12,7 +14,7 @@ export function openDatabase(filename: string) {
     db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
     db.exec('BEGIN IMMEDIATE');
     const version = (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
-    if (version > 2) throw new Error('Database schema is newer than this server supports.');
+    if (version > 5) throw new Error('Database schema is newer than this server supports.');
     if (version === 0) {
       db.exec(`
         CREATE TABLE products (
@@ -52,6 +54,66 @@ export function openDatabase(filename: string) {
             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
         WHERE id = ? AND json_extract(presentation, '$.mark') = ?`).run('chatgpt-plus', '+');
       db.exec('PRAGMA user_version = 2');
+    }
+    if (version < 3) {
+      db.exec(`CREATE TABLE IF NOT EXISTS orders (
+        id TEXT PRIMARY KEY,
+        owner_hash TEXT NOT NULL,
+        email TEXT NOT NULL,
+        snapshot TEXT NOT NULL CHECK (json_valid(snapshot)),
+        status TEXT NOT NULL CHECK (status IN ('pending', 'paid', 'closed')),
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        paid_at TEXT,
+        trade_no TEXT UNIQUE,
+        idempotency_key TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        environment TEXT NOT NULL CHECK (environment IN ('sandbox', 'production')),
+        terms_version TEXT NOT NULL DEFAULT '2026-10-17',
+        UNIQUE (owner_hash, idempotency_key)
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS orders_owner_created ON orders(owner_hash, created_at DESC);`);
+      for (const [key, oldValue, newValue] of [
+        ['home', previousContent.home, home], ['faqs', previousContent.faqs, faqs], ['articles', previousContent.articles, articles],
+      ] as const) {
+        const row = db.prepare('SELECT value FROM content WHERE key = ?').get(key);
+        if (row) db.prepare('UPDATE content SET value = ? WHERE key = ?').run(
+          JSON.stringify(migrateContent(JSON.parse(row.value as string), oldValue, newValue)), key);
+      }
+      db.exec('PRAGMA user_version = 3');
+    }
+    if (version < 4) {
+      db.exec(`CREATE TABLE IF NOT EXISTS alipay_notify_events (
+        event_key TEXT PRIMARY KEY, order_id TEXT NOT NULL REFERENCES orders(id),
+        notify_id TEXT NOT NULL, trade_no TEXT NOT NULL, event_type TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS payment_refunds (
+        request_no TEXT PRIMARY KEY, order_id TEXT NOT NULL REFERENCES orders(id),
+        amount_cents INTEGER NOT NULL CHECK(amount_cents > 0), reason TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('pending', 'success')),
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      ) STRICT;
+      PRAGMA user_version = 4;`);
+    }
+    if (version < 5) {
+      db.exec(`CREATE TABLE IF NOT EXISTS admin_accounts (
+        username TEXT PRIMARY KEY, password_hash TEXT NOT NULL, created_at TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS admin_sessions (
+        token_hash TEXT PRIMARY KEY, username TEXT NOT NULL REFERENCES admin_accounts(username) ON DELETE CASCADE,
+        expires_at TEXT NOT NULL
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS admin_sessions_expiry ON admin_sessions(expires_at);
+      CREATE TABLE IF NOT EXISTS product_clicks (
+        id INTEGER PRIMARY KEY, event_id TEXT NOT NULL, product_id TEXT NOT NULL,
+        product_name TEXT NOT NULL, visitor_hash TEXT NOT NULL,
+        environment TEXT NOT NULL CHECK(environment IN ('sandbox','production')), created_at TEXT NOT NULL,
+        UNIQUE(environment, product_id, event_id)
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS product_clicks_range ON product_clicks(environment, created_at);
+      CREATE INDEX IF NOT EXISTS product_clicks_visitor ON product_clicks(visitor_hash, product_id, environment, created_at);
+      PRAGMA user_version = 5;`);
     }
     db.exec('COMMIT');
     return db;

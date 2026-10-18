@@ -1,20 +1,23 @@
 import { expect, test } from '@playwright/test';
 
-test('catalog filtering, comparison dialog and FAQ', async ({ page }) => {
+test('catalog categories, search, empty state and product detail entry', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('.product-card')).toHaveCount(4);
-  await expect(page.locator('.product-card .art-symbol').first()).toHaveText('Plus');
+  await expect(page.locator('.product-card img').first()).toBeVisible();
   await page.locator('[data-category="Plus"]').click();
   await expect(page.locator('.product-card')).toHaveCount(1);
   await page.locator('[data-category="Pro"]').click();
   await expect(page.locator('.product-card')).toHaveCount(3);
-  await page.getByRole('button', { name: '套餐对比' }).click();
-  await expect(page.getByRole('dialog')).toBeVisible();
-  await page.keyboard.press('Escape');
-  await expect(page.getByRole('dialog')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: '套餐对比' })).toBeFocused();
-  await page.locator('.faq-list summary').first().click();
-  await expect(page.locator('.faq-list details').first()).toHaveAttribute('open', '');
+  await page.getByRole('searchbox', { name: '搜索商品' }).fill('20x');
+  await expect(page.locator('.product-card')).toHaveCount(1);
+  await expect(page.locator('.product-card h3')).toHaveText('ChatGPT Pro 20x');
+  await page.getByRole('searchbox', { name: '搜索商品' }).fill('missing product');
+  await expect(page.getByRole('heading', { name: '没有找到相关商品' })).toBeVisible();
+  await page.getByRole('button', { name: '清空筛选' }).click();
+  await expect(page.locator('.product-card')).toHaveCount(4);
+  await expect(page.locator('.product-card .feature-list, .product-card .status-badge')).toHaveCount(0);
+  await page.locator('.product-card').first().getByRole('link', { name: '查看详情', exact: true }).click();
+  await expect(page).toHaveURL(/\/products\/chatgpt-plus$/);
 });
 
 test('checkout validation, privacy and idempotent local selections', async ({ page }) => {
@@ -47,25 +50,25 @@ test('checkout validation, privacy and idempotent local selections', async ({ pa
   await page.locator('#order-search').fill('unknown');
   await expect(page.locator('.draft-row')).toHaveCount(0);
   await page.locator('#order-search').fill('');
-  await page.getByRole('button', { name: '已完成', exact: true }).click();
-  await expect(page.locator('#order-results')).toContainText('暂无已完成订单');
+  await page.getByRole('button', { name: '已付款', exact: true }).click();
+  await expect(page.locator('#order-results')).toContainText('暂无已付款订单');
   await page.locator('[data-order-filter="全部"]').click();
   await page.locator('.draft-row .icon-button').click();
   await page.getByRole('button', { name: '删除草稿', exact: true }).click();
   await expect(page.locator('.draft-row')).toHaveCount(0);
 });
 
-test('confirmed plans retain disabled transaction boundaries and honest email recovery', async ({ page }) => {
+test('unconfigured Alipay disables checkout and email recovery remains honest', async ({ page }) => {
   await page.goto('/checkout/chatgpt-pro-5x');
   await expect(page.getByRole('heading', { level: 1 })).toContainText('核对订阅信息');
   await expect(page.locator('.summary-total')).toContainText('660');
-  await expect(page.getByRole('button', { name: '支付尚未开放' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '支付宝待配置' })).toBeDisabled();
   await page.goto('/checkout/unknown');
   await expect(page.getByRole('heading', { level: 1 })).toContainText('无法选择');
   await page.goto('/orders/unknown');
   await expect(page.getByRole('heading', { level: 1 })).toContainText('无法查看');
   await page.goto('/pay/example');
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('支付暂未开放');
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('无法查看');
   await page.goto('/orders/example');
   await expect(page.getByRole('heading', { level: 1 })).toContainText('无法查看');
   await page.goto('/orders');
@@ -75,7 +78,7 @@ test('confirmed plans retain disabled transaction boundaries and honest email re
   await expect(page.locator('#recover-error')).toContainText('未发送');
 });
 
-test('merchant prices agree across catalog, comparison, details, checkout and saved selections', async ({ page }) => {
+test('merchant prices agree across catalog, details, checkout and saved selections', async ({ page }) => {
   const plans = [
     { id: 'chatgpt-plus', price: '130', cents: 13000 },
     { id: 'chatgpt-pro-5x', price: '660', cents: 66000 },
@@ -86,15 +89,9 @@ test('merchant prices agree across catalog, comparison, details, checkout and sa
   for (const [index, plan] of plans.entries()) {
     const card = page.locator('.product-card').nth(index);
     await expect(card.locator('.price')).toContainText(plan.price);
-    await expect(card.locator('.status-badge')).toHaveText('可选套餐');
+    await expect(card.getByRole('link', { name: '查看详情', exact: true })).toBeVisible();
   }
   await expect(page.locator('main')).not.toContainText('示例价格');
-  await page.getByRole('button', { name: '套餐对比', exact: true }).click();
-  const prices = page.getByRole('row', { name: /^本站售价/ });
-  for (const [index, plan] of plans.entries()) {
-    await expect(prices.getByRole('cell').nth(index)).toHaveText(`¥${plan.price}/月`);
-  }
-  await page.keyboard.press('Escape');
   for (const plan of plans) {
     await page.goto(`/products/${plan.id}`);
     await expect(page.locator('.purchase-price .price')).toContainText(plan.price);
@@ -145,8 +142,8 @@ test('theme preference persists', async ({ page }) => {
   await page.emulateMedia({ colorScheme: 'light' });
   await page.goto('/');
   await page.getByRole('heading', { level: 1 }).waitFor();
-  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(248, 249, 245)');
-  await expect(page.locator('.catalog-intro')).toHaveCSS('background-color', 'rgb(248, 249, 245)');
+  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(247, 249, 252)');
+  await expect(page.locator('.storefront-hero')).toBeVisible();
   await expect(page.locator('.product-card').first()).toHaveCSS('background-color', 'rgb(255, 255, 255)');
   await page.getByRole('button', { name: '切换外观' }).click();
   await page.getByRole('menuitemradio', { name: '深色' }).click();
@@ -169,45 +166,20 @@ test('mobile navigation closes with Escape and restores focus', async ({ page })
   await expect(page.getByRole('button', { name: '打开导航' })).toBeFocused();
 });
 
-test('soft hero illustration and subscription entry points', async ({ page }) => {
-  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' });
+test('minimal hero returns to the full catalog without decorative content', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'light' });
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/');
-  const pixels = () => page.locator('.idea-backdrop').evaluate((node) => {
-    const canvas = node as HTMLCanvasElement;
-    const data = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data;
-    let signature = 0;
-    let painted = 0;
-    for (let index = 0; index < data.length; index += 32) {
-      signature = (signature + data[index] * (index % 97 + 1)) % 1000000007;
-      if (data[index + 3] > 0) painted += 1;
-    }
-    return { signature, painted };
-  });
-  await expect.poll(async () => (await pixels()).painted).toBeGreaterThan(1000);
-  const framePixels = await page.locator('.idea-backdrop').evaluate((node) => {
-    const canvas = node as HTMLCanvasElement;
-    const { width, height } = canvas.getBoundingClientRect();
-    const scale = Math.min(width / 1440, 1.4, (height - 48) / 368) * 0.9;
-    const angle = -Math.PI / 45;
-    const ratio = canvas.width / width;
-    const sample = (x: number) => [...canvas.getContext('2d')!.getImageData(
-      Math.round((width * 0.79 + (x * Math.cos(angle) + 90 * Math.sin(angle)) * scale) * ratio),
-      Math.round((height * 0.49 + (x * Math.sin(angle) - 90 * Math.cos(angle)) * scale) * ratio), 1, 1,
-    ).data];
-    return { inside: sample(-225), outside: sample(-290) };
-  });
-  expect(framePixels.inside).toEqual([255, 255, 255, 255]);
-  expect(framePixels.outside[3]).toBe(0);
-  const before = await pixels();
-  await page.mouse.move(1150, 210);
-  await expect.poll(async () => (await pixels()).signature).not.toBe(before.signature);
-  await page.screenshot({ path: 'artifacts/soft-hero-desktop.png' });
-  await page.getByRole('button', { name: '比较套餐', exact: true }).click();
-  await expect(page.getByRole('dialog')).toBeVisible();
-  await page.keyboard.press('Escape');
-  await page.getByRole('link', { name: '了解订阅流程' }).click();
-  await expect(page).toHaveURL(/\/help\/getting-started$/);
+  await expect(page.locator('.storefront-sidebar')).toBeVisible();
+  await expect(page.locator('.service-band, .guide-section, .faq-section, .idea-backdrop')).toHaveCount(0);
+  await page.locator('[data-category="Pro"]').click();
+  await page.getByRole('searchbox', { name: '搜索商品' }).fill('20x');
+  await expect(page.locator('.product-card')).toHaveCount(1);
+  await page.getByRole('link', { name: '浏览全部商品' }).click();
+  await expect(page.locator('.product-card')).toHaveCount(4);
+  await expect(page.getByRole('searchbox', { name: '搜索商品' })).toHaveValue('');
+  await page.goto('/');
+  await page.screenshot({ path: 'artifacts/storefront-desktop.png', fullPage: true });
 });
 
 const routes = ['/', '/products/chatgpt-plus', '/products/chatgpt-pro-5x', '/products/chatgpt-pro-20x', '/products/chatgpt-pro-50x-ph', '/checkout/chatgpt-plus', '/checkout/chatgpt-pro-5x', '/checkout/chatgpt-pro-20x', '/checkout/chatgpt-pro-50x-ph', '/orders', '/orders/example', '/help', '/help/getting-started', '/support', '/terms', '/privacy', '/missing'];
@@ -240,11 +212,13 @@ for (const width of [320, 360, 390, 768, 1024, 1440, 1920]) {
     await expect(page.locator('.product-card')).toHaveCount(4);
     const cards = await page.locator('.product-card').evaluateAll((nodes) => nodes.map((node) => ({
       left: node.getBoundingClientRect().left,
+      top: node.getBoundingClientRect().top,
       height: node.getBoundingClientRect().height,
       buttonTop: node.querySelector('.button')!.getBoundingClientRect().top,
     })));
-    if (width <= 680) expect(new Set(cards.map((card) => card.left)).size).toBe(1);
-    if (width > 900) expect(new Set(cards.map((card) => card.buttonTop)).size).toBe(1);
+    if (width < 360) expect(new Set(cards.map((card) => card.left)).size).toBe(1);
+    if (width >= 360 && width <= 680) expect(new Set(cards.map((card) => card.left)).size).toBe(2);
+    for (const top of new Set(cards.map(card => card.top))) expect(new Set(cards.filter(card => card.top === top).map(card => card.buttonTop)).size).toBe(1);
     if (width === 1440) expect(Math.max(...cards.map((card) => card.height))).toBeLessThan(500);
     await page.screenshot({ path: `artifacts/react-home-${width}.png`, fullPage: true });
     if (width === 390) await page.screenshot({ path: 'artifacts/refined-mobile-viewport.png' });

@@ -6,8 +6,15 @@ import { useSelections } from '../hooks/useSelections';
 import { formatDate, money } from '../lib/format';
 import { useApiResource } from '../hooks/useApiResource';
 import type { Product } from '../types/catalog';
+import PaymentPage from './PaymentPage';
 
 export default function OrderDetailPage() {
+  const { orderRef } = useParams();
+  const selection = useSelections().find((item) => item.id === orderRef);
+  return selection ? <DraftDetail /> : <PaymentPage />;
+}
+
+function DraftDetail() {
   const { orderRef } = useParams();
   const selection = useSelections().find((item) => item.id === orderRef);
   const catalog = useApiResource<Product>(selection ? `/products/${encodeURIComponent(selection.productId)}` : null);
@@ -30,10 +37,10 @@ export default function OrderDetailPage() {
       </dl>
       <h2 className="subsection-title">订阅进度</h2><ol className="timeline">
         <li className="current"><span /><div><h3>套餐清单已保存</h3><p>仅本机草稿，不会发送邮件或创建交付任务。</p></div></li>
-        <li><span /><div><h3>付款确认</h3><p>支付服务尚未开放。</p></div></li><li><span /><div><h3>服务交付</h3><p>交付方案及处理时限待确认。</p></div></li><li><span /><div><h3>完成订阅</h3><p>未开始。</p></div></li>
+        <li><span /><div><h3>付款确认</h3><p>草稿不可直接付款，请按最新价格重新创建订单。</p></div></li><li><span /><div><h3>服务交付</h3><p>交付方案及处理时限待确认。</p></div></li><li><span /><div><h3>完成订阅</h3><p>未开始。</p></div></li>
       </ol>
-    </section><aside className="purchase-panel"><h2>清单操作</h2><p className="body-copy">当前不会收款或提供订阅交付，请勿提交账号密码或完整登录凭据。</p>
-      <button className="button full-width" type="button" disabled><Icon name="lock-keyhole" />支付尚未开放</button>
+    </section><aside className="purchase-panel"><h2>清单操作</h2><p className="body-copy">此清单不是订单。下单前需重新核对当前价格与服务条件，请勿提交账号密码或完整登录凭据。</p>
+      {product?.selectable && <Link className="button primary full-width" to={`/checkout/${selection.productId}`}>按当前价格下单</Link>}
       <Link className="button secondary full-width spaced-button" to="/support"><Icon name="headphones" />联系支持</Link>
       <Link className="text-button spaced-button" to="/orders"><Icon name="arrow-left" />返回我的订单</Link>
     </aside></div>

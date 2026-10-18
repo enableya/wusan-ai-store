@@ -28,7 +28,7 @@ function RecoverForm() {
     setError(valid ? '邮件服务尚未开放，未发送验证码。' : '请填写有效的联系邮箱。');
   }
   return <>
-    <p className="modal-description">使用下单时填写的联系邮箱，验证后查看所属订单。</p>
+    <p className="modal-description">当前浏览器的订单可在“我的订单”查看。跨设备邮箱找回仍在准备中，请保留下单时的浏览器 Cookie 和订单号。</p>
     <Notice subtle>邮箱验证尚未开放，当前不会发送验证码。</Notice>
     <form onSubmit={submit} noValidate>
       <label htmlFor="recover-email">联系邮箱</label>
