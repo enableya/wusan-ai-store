@@ -1,0 +1,28 @@
+[Unit]
+Description=Wusan AI store API
+After=network.target
+
+[Service]
+Type=simple
+User=wusan
+Group=wusan
+WorkingDirectory=/opt/wusan-ai-store/current
+EnvironmentFile=/etc/wusan-ai-store/production.env
+Environment=WUSAN_PROFILE=production
+# 使用 Node.js 24+；安装在其他路径时修改此行。
+ExecStart=/usr/local/bin/node /opt/wusan-ai-store/current/server/index.ts
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=15
+UMask=0077
+StateDirectory=wusan-ai-store
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/wusan-ai-store
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="540" viewBox="0 0 800 540">
+  <defs>
+    <linearGradient id="background" x2="1" y2="1"><stop stop-color="#eef4ff"/><stop offset="1" stop-color="#dbe7ff"/></linearGradient>
+    <linearGradient id="paper" x2="1" y2="1"><stop stop-color="#fff"/><stop offset="1" stop-color="#eef4ff"/></linearGradient>
+    <filter id="shadow" x="-30%" y="-40%" width="160%" height="190%"><feDropShadow dx="0" dy="20" stdDeviation="19" flood-color="#005BF8" flood-opacity=".10"/></filter>
+  </defs>
+  <path fill="url(#background)" d="M0 0h800v540H0z"/>
+  <circle cx="700" cy="-40" r="360" fill="#fff" opacity=".26"/>
+  <circle cx="60" cy="540" r="220" fill="#fff" opacity=".2"/>
+  <g transform="rotate(-5 400 270)" filter="url(#shadow)">
+    <rect x="137" y="93" width="526" height="354" rx="25" fill="url(#paper)" stroke="#fff" stroke-width="2"/>
+    <text x="185" y="170" font-family="Arial, sans-serif" font-size="28" font-weight="600" fill="#005BF8">ChatGPT</text>
+    <path d="M596 132c0 22-11 33-33 33 22 0 33 11 33 33 0-22 11-33 33-33-22 0-33-11-33-33Z" fill="#005BF8" opacity=".8"/>
+    <text x="182" y="308" font-family="Arial, sans-serif" font-size="77" font-weight="600" letter-spacing="-3" fill="#005BF8">Plus</text>
+    <path d="M185 351h430" stroke="#005BF8" stroke-opacity=".13"/>
+    <text x="185" y="398" font-family="Arial, sans-serif" font-size="13" letter-spacing="3" fill="#005BF8" opacity=".62">MONTHLY SUBSCRIPTION</text>
+  </g>
+</svg>
