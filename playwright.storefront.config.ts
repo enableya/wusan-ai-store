@@ -8,7 +8,7 @@ const env = {
   PUBLIC_SITE_URL: 'http://127.0.0.1:5220', ADMIN_ORIGIN: 'http://127.0.0.1:5220',
 };
 export default defineConfig({
-  ...base, workers: 4, testMatch: 'store.spec.ts',
+  ...base, workers: 4, testMatch: ['store.spec.ts', 'payments.spec.ts'],
   use: { ...base.use, baseURL: 'http://127.0.0.1:5220', channel: 'chrome' },
   webServer: [
     { command: `"${process.execPath}" server/index.ts`, url: 'http://127.0.0.1:5222/api/health', reuseExistingServer: false, env },

@@ -1,0 +1,14 @@
+<service>
+  <id>WusanWeb</id>
+  <name>Wusan AI Web</name>
+  <description>Caddy static files, same-origin API proxy and automatic TLS.</description>
+  <executable>C:\WusanAI\bin\caddy.exe</executable>
+  <arguments>run --config C:\ProgramData\WusanAI\Caddyfile --adapter caddyfile</arguments>
+  <workingdirectory>C:\WusanAI</workingdirectory>
+  <serviceaccount><domain>NT AUTHORITY</domain><user>LocalService</user></serviceaccount>
+  <startmode>Automatic</startmode>
+  <onfailure action="restart" delay="10 sec" />
+  <stoptimeout>15 sec</stoptimeout>
+  <logpath>C:\ProgramData\WusanAI\logs\web</logpath>
+  <log mode="roll-by-size"><sizeThreshold>10240</sizeThreshold><keepFiles>5</keepFiles></log>
+</service>

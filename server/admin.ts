@@ -1,19 +1,11 @@
-import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
 import { OrderError } from './orders.ts';
+import { verifyPassword as verify } from './passwords.ts';
+export { hashPassword as hashAdminPassword } from './passwords.ts';
 
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
-const derive = (password: string, salt: string) => new Promise<Buffer>((resolve, reject) => scrypt(password, salt, 64, (error, key) => error ? reject(error) : resolve(key)));
-export async function hashAdminPassword(password: string) {
-  const salt = randomBytes(16).toString('hex');
-  return `scrypt:${salt}:${(await derive(password, salt)).toString('hex')}`;
-}
-async function verify(password: string, encoded: string) {
-  const [method, salt, hash] = encoded.split(':');
-  if (method !== 'scrypt' || !/^[a-f0-9]{32}$/.test(salt || '') || !/^[a-f0-9]{128}$/.test(hash || '')) return false;
-  return timingSafeEqual(await derive(password, salt), Buffer.from(hash, 'hex'));
-}
 
 export function adminRepository(db: DatabaseSync, origin: string) {
   let secure = false;

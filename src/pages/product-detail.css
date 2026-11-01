@@ -1,0 +1,85 @@
+.product-detail-page { background: linear-gradient(180deg,#eff5ff,var(--page) 560px); min-height: 75vh; }
+.product-detail-container { max-width: 1200px; }
+.product-detail-page .breadcrumb { font-size: 14px; }
+.product-buy-layout { display: grid; grid-template-columns: minmax(0,.8fr) minmax(0,1.2fr); gap: 30px; padding: 24px; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; align-items: start; }
+.product-gallery { border-radius: 12px; overflow: hidden; position: sticky; top: 24px; min-width: 0; background: var(--soft); }
+.product-gallery picture { display: block; }
+.product-gallery img { display: block; width: 100%; height: auto; aspect-ratio: 20 / 19; object-fit: contain; }
+.product-gallery-caption { display: flex; justify-content: space-between; gap: 12px; padding: 10px 14px; font-size: 12px; color: var(--muted); background: var(--surface); border-top: 1px solid var(--line); }
+.product-buy-info { min-width: 0; padding: 3px 0; }
+.product-buy-info > .eyebrow { font-size: 12px; }
+.product-buy-info h1 { font-size: 28px; line-height: 1.3; margin: 6px 0 8px; }
+.product-buy-description { font-size: 16px; line-height: 1.6; margin-bottom: 14px; }
+.product-buy-price { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 12px; row-gap: 2px; border-radius: 9px; background: var(--mint); padding: 10px 14px; margin-bottom: 16px; color: var(--muted); font-size: 16px; }
+.product-buy-price > span { white-space: nowrap; }
+.product-buy-price strong { color: var(--green); font: 650 32px/1.3 "Segoe UI",sans-serif; letter-spacing: -.6px; white-space: nowrap; }
+.product-buy-price strong small { font-size: 19px; margin-right: 3px; }
+.product-purchase-form .purchase-field { min-width: 0; margin-bottom: 14px; }
+.purchase-field label { font-size: 16px; margin-bottom: 6px; }
+.purchase-field label > span { color: var(--danger); margin-left: 3px; }
+.product-purchase-form input:not([type='checkbox']):not([type='radio']) { background: var(--page); border-radius: 7px; height: 40px; min-height: 40px; font-size: 16px; line-height: 1.5; padding: 7px 12px; }
+.product-purchase-form input::placeholder { color: var(--muted); opacity: 1; }
+.product-purchase-form .field-hint { font-size: 14px; line-height: 1.55; margin-top: 5px; }
+.product-purchase-form .field-error { font-size: 14px; }
+.product-payment-method { border: 0; padding: 0; margin: 0 0 14px; min-width: 0; }
+.product-payment-method legend { font-size: 16px; font-weight: 500; margin-bottom: 6px; }
+.product-payment-method label { display: flex; align-items: center; gap: 9px; border: 1px solid var(--green); background: var(--mint); border-radius: 8px; padding: 8px 10px; margin: 0; }
+.product-payment-method input[type='radio'] { width: 18px; height: 18px; min-height: 0; padding: 0; accent-color: var(--primary); margin: 0; }
+.alipay-symbol { display: block; width: 26px; height: 26px; flex: 0 0 26px; }
+.product-payment-method strong { font-size: 16px; font-weight: 500; }
+.product-payment-method small { font-size: 13px; margin-left: auto; color: var(--muted); }
+.product-order-total { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--line); font-size: 16px; color: var(--muted); }
+.product-order-total b { color: var(--text); font-weight: 400; margin-left: 12px; }
+.product-order-total strong { font-size: 24px; color: var(--text); margin-left: 10px; font-family: "Segoe UI",sans-serif; }
+.product-terms { margin-top: 12px; gap: 8px; }
+.product-terms label { font-size: 14px; line-height: 1.6; margin: 0; }
+.product-terms input[type='checkbox'] { width: 18px; height: 18px; flex-basis: 18px; margin-top: 2px; }
+.product-purchase-form .buy-now { margin-top: 12px; min-height: 44px; font-size: 16px; border-radius: 8px; }
+.product-purchase-form .buy-now:disabled { opacity: .75; }
+.product-purchase-form .payment-availability { text-align: center; margin-top: 7px; }
+.payment-availability .text-button { font-size: 14px; margin-left: 8px; }
+.product-description-panel { margin-top: 28px; padding: 34px 40px 44px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+.item-details-heading { display: flex; align-items: center; gap: 20px; margin-bottom: 28px; }
+.item-details-heading > span { flex: 1; height: 1px; background: var(--line); }
+.item-details-heading h2 { font-size: 21px; color: var(--green); margin: 0; }
+.item-details-content { max-width: 900px; margin: 0 auto; }
+.item-details-intro { position: relative; overflow: hidden; border-radius: 15px; background: radial-gradient(circle at 98% 4%,rgb(255 255 255 / 14%) 0 90px,transparent 91px),linear-gradient(115deg,#005bf8,#7240ed); padding: 32px; margin-bottom: 22px; color: #fff; box-shadow: 0 6px 20px rgb(0 91 248 / 13%); }
+.item-details-intro .eyebrow { font-size: 12px; letter-spacing: 1.4px; color: #e5edff; }
+.item-details-intro h3 { margin: 12px 0; font-size: 29px; color: #fff; }
+.item-details-intro p { font-size: 16px; line-height: 1.95; margin-bottom: 0; color: #f1f5ff; }
+.item-detail-tags { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 22px; }
+.item-detail-tags > span { padding: 5px 12px; border-radius: 30px; background: #fff; color: #234477; font-size: 12px; font-weight: 550; }
+.item-detail-section { padding: 25px; margin-bottom: 22px; border: 1px solid var(--line); border-radius: 15px; background: var(--surface); box-shadow: 0 5px 18px rgb(28 54 110 / 5%); }
+.item-detail-section:last-child { margin-bottom: 0; }
+.item-detail-section > h3 { display: flex; align-items: center; gap: 11px; margin: 0 0 20px; font-size: 20px; }
+.item-section-number { display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 9px; flex-shrink: 0; color: var(--green); background: var(--mint); font: 650 14px "Segoe UI",sans-serif; }
+.item-specifications { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; font-size: 16px; margin: 0; }
+.item-specifications > div { min-width: 0; padding: 17px 18px; background: var(--mint); border: 1px solid #dbe7ff; border-radius: 10px; }
+.item-specifications dt { color: var(--text); font-weight: 600; margin-bottom: 7px; }
+.item-specifications dd { margin: 0; color: var(--muted); line-height: 1.85; overflow-wrap: anywhere; }
+.item-purchase-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.item-purchase-steps li { min-width: 0; background: var(--mint); border: 1px solid #dbe7ff; padding: 18px; border-radius: 10px; }
+.item-purchase-steps li:last-child { grid-column: 1 / -1; }
+.item-purchase-steps li > span { display: inline-block; color: var(--green); font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+.item-purchase-steps h4 { font-size: 16px; font-weight: 600; margin: 0 0 8px; }
+.item-purchase-steps p,.item-details-note { font-size: 16px; line-height: 1.9; margin: 0; }
+.item-warranty-section { background: #edfcf5; border-color: #a7edce; border-radius: 18px; }
+.item-warranty-section > h3 { font-size: 22px; }
+.item-warranty-section .item-section-number { color: #005bf8; background: #edf5ff; }
+.item-warranty-section .item-specifications > div { padding: 20px; background: #eff6ff; border-color: #bfd8ff; border-radius: 14px; }
+.item-warranty-section .item-specifications dd { color: #435269; }
+.item-details-note { color: var(--muted); margin-block: 18px; padding: 16px 18px; border-left: 3px solid var(--green); background: var(--soft); border-radius: 0 9px 9px 0; }
+.item-detail-section > .text-button { font-size: 15px; }
+:root[data-theme='dark'] .item-specifications > div,:root[data-theme='dark'] .item-purchase-steps li { border-color: #355586; }
+:root[data-theme='dark'] .item-warranty-section { background: #192f29; border-color: #35634f; }
+:root[data-theme='dark'] .item-warranty-section .item-specifications > div { background: #203354; border-color: #355586; }
+:root[data-theme='dark'] .item-warranty-section .item-specifications dd { color: var(--muted); }
+:root[data-theme='dark'] .product-detail-page { background: linear-gradient(180deg,#19273e,var(--page) 560px); }
+@media(max-width:1000px) { .product-buy-layout { gap: 24px; padding: 22px; grid-template-columns: minmax(0,.8fr) minmax(0,1.2fr); } .product-buy-info h1 { font-size: 26px; } }
+@media(max-width:760px) { .product-buy-layout { grid-template-columns: minmax(0,1fr); padding: 18px; gap: 18px; } .product-gallery { position: static; } .product-gallery img { aspect-ratio: 800 / 330; } .product-gallery-caption { padding: 9px 12px; } .product-purchase-form input:not([type='checkbox']):not([type='radio']) { height: 44px; min-height: 44px; } .product-description-panel { padding: 24px 18px; } .item-details-intro { padding: 24px; } .item-detail-section { padding: 21px; } .item-purchase-steps { grid-template-columns: 1fr; gap: 10px; } .item-purchase-steps li { display: flex; gap: 14px; padding: 16px; } .item-purchase-steps li > span { margin: 0; } }
+@media(max-width:420px) { .product-buy-layout { padding: 16px; border-radius: 12px; } .product-buy-info h1 { font-size: 24px; } .product-buy-price { padding: 10px 13px; } .product-description-panel { padding: 22px 16px; border-radius: 12px; } .item-details-intro { padding: 23px 20px; } .item-details-intro h3 { font-size: 25px; } .item-details-intro p,.item-specifications,.item-purchase-steps p,.item-details-note { font-size: 15px; } .item-details-heading h2 { font-size: 20px; } .item-detail-section { padding: 18px 16px; } .item-detail-section > h3 { font-size: 19px; } .item-specifications { grid-template-columns: 1fr; gap: 10px; } .item-specifications > div { padding: 15px; } .item-detail-tags { gap: 7px; } .item-detail-tags > span { font-size: 11px; padding: 5px 9px; } }
+
+@media(min-width:1100px) {
+  .product-purchase-form { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); column-gap: 14px; }
+  .product-purchase-form > :not(.purchase-field) { grid-column: 1 / -1; }
+}

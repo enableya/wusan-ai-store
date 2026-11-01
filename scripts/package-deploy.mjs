@@ -36,8 +36,12 @@ try {
   await lstat(join(root, 'dist/index.html'));
   for (const relative of ['package.json', 'package-lock.json', 'scripts/run.mjs', 'scripts/node-runtime.mjs', 'scripts/profile.mjs',
     'deploy/production.env.example', 'deploy/frontend.env.example', 'deploy/wusan-api.service',
-    'deploy/nginx-https.conf', 'deploy/nginx-preview.conf', 'deploy/sandbox.env.example', 'docs/deployment.md', 'docs/alipay.md', 'docs/admin.md']) await copy(relative);
+    'deploy/nginx-https.conf', 'deploy/nginx-preview.conf', 'deploy/sandbox.env.example', 'docs/deployment.md', 'docs/alipay.md', 'docs/admin.md', 'docs/orders.md', 'src/lib/order-input.ts']) await copy(relative);
   await copyTree('dist', () => true, true);
+  await copyTree('deploy/windows', () => true);
+  await copy('docs/windows-migration.md');
+  await copy('server/windows-key-acl.ps1');
+  await copy('scripts/backup-database.mjs');
   for (const relative of ['server', 'server/seed', 'src/types']) {
     await copyTree(relative, name => name.endsWith('.ts') && !name.endsWith('.test.ts'));
   }

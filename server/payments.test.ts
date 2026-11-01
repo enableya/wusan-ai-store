@@ -8,6 +8,7 @@ import type { TradeResult } from './alipay.ts';
 import { openDatabase } from './database.ts';
 import { createApiServer } from './app.ts';
 import type { Order, PaymentConfig } from '../src/types/orders.ts';
+import { hashAdminPassword } from './admin.ts';
 
 const merchant = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const alipay = generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -19,16 +20,16 @@ const env = {
 };
 const gateway = createAlipayGateway(env, { sandboxPath: null });
 const key = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
-const input = { productId: 'chatgpt-plus', expectedPriceCents: 13000, email: 'private@example.com', acceptedTerms: true };
+const input = { productId: 'chatgpt-plus', expectedPriceCents: 13000, contact: 'private@example.com', queryPassword: 'test-order-password', acceptedTerms: true };
 
-async function setup(t: TestContext, enabled = true) {
+async function setup(t: TestContext, enabled = true, publicCheckoutEnabled = true) {
   const db = openDatabase(':memory:');
   let trade: TradeResult | null = null;
   let queryError = false;
   const server = createApiServer(db, enabled ? { ...gateway, async query() {
     if (queryError) throw new Error('Network failure');
     return trade;
-  } } : createAlipayGateway({}));
+  } } : createAlipayGateway({}), { publicCheckoutEnabled });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const address = server.address();
@@ -73,10 +74,35 @@ test('unconfigured checkout stays disabled and never persists a payable order', 
   assert.doesNotMatch(JSON.stringify(status.body), /privateKey|sellerId|appId/);
 });
 
+test('closed public checkout permits authenticated acceptance tests and still processes signed notifications', async t => {
+  const { request, db, notify } = await setup(t, true, false);
+  const status = await request<PaymentConfig>('/api/payments/config');
+  assert.equal(status.body.data.enabled, false);
+  const ownerCookie = status.response.headers.get('set-cookie')!.split(';')[0];
+  assert.equal((await request('/api/orders', input)).response.status, 503);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM orders').get()!.n, 0);
+  db.prepare('INSERT INTO admin_accounts VALUES (?,?,?)').run('admin', await hashAdminPassword('acceptance-admin-password'), new Date().toISOString());
+  const login = await request('/api/admin/login', { username: 'admin', password: 'acceptance-admin-password' });
+  assert.equal(login.response.status, 200);
+  const adminCookie = login.response.headers.get('set-cookie')!.split(';')[0];
+  const cookie = `${ownerCookie}; ${adminCookie}`;
+  assert.equal((await request<PaymentConfig>('/api/payments/config', undefined, { cookie })).body.data.enabled, true);
+  const created = await request('/api/orders', input, { cookie });
+  assert.equal(created.response.status, 201);
+  const id = created.body.data.id;
+  assert.equal((await request(`/api/orders/${id}/payment`, {}, { cookie })).response.status, 200);
+  assert.equal((await request(`/api/orders/${id}/payment`, {}, { cookie: ownerCookie })).response.status, 503);
+  assert.equal((await notify({ out_trade_no: id })).status, 200);
+  assert.equal((await request(`/api/orders/${id}`, undefined, { cookie: ownerCookie })).body.data.status, 'paid');
+  await request('/api/admin/logout', {}, { cookie });
+  assert.equal((await request<PaymentConfig>('/api/payments/config', undefined, { cookie })).body.data.enabled, false);
+  assert.equal((await request('/api/orders', input, { cookie, key: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff' })).response.status, 503);
+});
+
 test('server prices, product availability, consent and JSON origin are enforced', async t => {
   const { request, db } = await setup(t);
   await request('/api/payments/config');
-  for (const body of [{ ...input, expectedPriceCents: 1 }, { ...input, email: 'bad' }, { ...input, acceptedTerms: false }]) {
+  for (const body of [{ ...input, expectedPriceCents: 1 }, { ...input, contact: 'bad' }, { ...input, queryPassword: 'short' }, { ...input, queryPassword: '        ' }, { ...input, queryPassword: undefined }, { ...input, acceptedTerms: false }]) {
     assert.ok([400, 409].includes((await request('/api/orders', body)).response.status));
   }
   assert.equal((await request('/api/orders', input, { origin: 'https://evil.example' })).response.status, 403);
@@ -93,8 +119,10 @@ test('order creation is idempotent, private and preserves immutable product snap
   assert.equal(first.response.status, 201);
   assert.equal(order.priceCents, 13000);
   assert.equal(order.status, 'pending');
+  assert.equal(db.prepare('SELECT terms_version FROM orders WHERE id = ?').get(order.id)!.terms_version, '2026-10-21');
   assert.equal((await request('/api/orders', input)).body.data.id, order.id);
-  assert.equal((await request('/api/orders', { ...input, email: 'changed@example.com' })).response.status, 409);
+  assert.equal((await request('/api/orders', { ...input, contact: 'changed@example.com' })).response.status, 409);
+  assert.equal((await request('/api/orders', { ...input, queryPassword: 'different-password' })).response.status, 409);
   db.prepare('UPDATE products SET price_cents = 13100, name = ? WHERE id = ?').run('Changed', input.productId);
   const detail = await request(`/api/orders/${order.id}`);
   assert.equal(detail.body.data.productName, 'ChatGPT Plus');
@@ -103,6 +131,51 @@ test('order creation is idempotent, private and preserves immutable product snap
   assert.equal((await request(`/api/orders/${order.id}`, undefined, { cookie: '' })).response.status, 404);
   assert.deepEqual((await request('/api/orders', undefined, { cookie: '' })).body.data, []);
   assert.equal((await request(`/api/orders/${order.id}/payment`, {}, { cookie: '' })).response.status, 404);
+});
+
+test('contact and password lookup grants only matching orders and expires without changing original ownership', async t => {
+  const { request, db } = await setup(t);
+  const config = await request('/api/payments/config');
+  const originalCookie = config.response.headers.get('set-cookie')!.split(';')[0];
+  const first = (await request('/api/orders', input)).body.data;
+  const second = (await request('/api/orders', { ...input, queryPassword: 'another-order-password' }, { key: 'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee' })).body.data;
+  const row = db.prepare('SELECT * FROM orders WHERE id = ?').get(first.id)!;
+  assert.match(String(row.query_password_hash), /^scrypt:/);
+  assert.notEqual(row.query_password_hash, input.queryPassword);
+  assert.doesNotMatch(JSON.stringify(first), /queryPassword|query_password|contact|private@example/);
+  assert.equal((await request(`/api/orders/${first.id}`, undefined, { cookie: '' })).response.status, 404);
+  assert.equal((await request('/api/orders/lookup', { contact: input.contact, queryPassword: 'wrong-password' }, { cookie: '' })).response.status, 401);
+  const found = await request<Order[]>('/api/orders/lookup', { contact: 'PRIVATE@example.com', queryPassword: input.queryPassword }, { cookie: '' });
+  assert.equal(found.response.status, 200);
+  assert.deepEqual(found.body.data.map(order => order.id), [first.id]);
+  assert.equal((await request(`/api/orders/${first.id}`)).response.status, 200);
+  assert.equal((await request(`/api/orders/${second.id}`)).response.status, 404);
+  assert.deepEqual((await request<Order[]>('/api/orders')).body.data.map(order => order.id), [first.id]);
+  db.prepare("UPDATE order_access SET expires_at = '2000-01-01T00:00:00Z'").run();
+  assert.equal((await request(`/api/orders/${first.id}`)).response.status, 404);
+  assert.equal((await request(`/api/orders/${first.id}`, undefined, { cookie: originalCookie })).response.status, 200);
+});
+
+test('lookup rejects missing passwords, cross-site requests and repeated guesses, including legacy orders', async t => {
+  const { request, db } = await setup(t);
+  const order = (await request('/api/orders', input)).body.data;
+  db.prepare('UPDATE orders SET query_password_hash = NULL, contact = NULL WHERE id = ?').run(order.id);
+  assert.equal((await request('/api/orders/lookup', { contact: input.contact }, { cookie: '' })).response.status, 400);
+  assert.equal((await request('/api/orders/lookup', input, { origin: 'https://evil.example' })).response.status, 403);
+  for (let i = 0; i < 7; i++) assert.equal((await request('/api/orders/lookup', input, { cookie: '' })).response.status, 401);
+  assert.equal((await request('/api/orders/lookup', input, { cookie: '' })).response.status, 429);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM order_access').get()!.n, 0);
+});
+
+test('concurrent idempotent purchase retries produce one order and accept non-email contact', async t => {
+  const { request, db } = await setup(t);
+  await request('/api/payments/config');
+  const body = { ...input, contact: '13800138000' };
+  const results = await Promise.all([request('/api/orders', body), request('/api/orders', body)]);
+  assert.ok(results.every(result => result.response.status === 201));
+  assert.equal(results[0].body.data.id, results[1].body.data.id);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM orders').get()!.n, 1);
+  assert.equal((await request<Order[]>('/api/orders/lookup', body, { cookie: '' })).body.data[0].id, results[0].body.data.id);
 });
 
 test('desktop and mobile checkout use POST page.pay forms and the server amount', async t => {

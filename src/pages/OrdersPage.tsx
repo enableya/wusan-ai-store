@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useUI } from '../app/UIProvider';
 import { Icon } from '../components/Icon';
@@ -20,6 +20,7 @@ export default function OrdersPage() {
   const [query, setQuery] = useState('');
   const selections = useSelections();
   const orders = useApiResource<Order[]>('/orders');
+  useEffect(() => { const reload = () => orders.reload(); window.addEventListener('wusan:orders-updated', reload); return () => window.removeEventListener('wusan:orders-updated', reload); }, [orders.reload]);
   const catalog = useApiResource<Product[]>(selections.length ? '/products' : null);
   const normalized = query.trim().toLowerCase();
   const filtered = selections.filter((selection) => !normalized || selection.productName.toLowerCase().includes(normalized) || selection.id.includes(normalized));
@@ -28,8 +29,8 @@ export default function OrdersPage() {
   const recover = () => openModal({ type: 'recover' });
   return <div className="container page-space orders-page">
     <PageHeading title="我的订单" eyebrow="YOUR ORDERS" description="每一次订阅，都有迹可循。"
-      action={<button className="button secondary" type="button" onClick={recover}><Icon name="mail" />通过邮箱找回</button>} />
-    <Notice subtle>此处展示当前浏览器有权访问的服务器订单。请保留本站 Cookie，邮箱验证码找回暂未开通。
+      action={<button className="button secondary" type="button" onClick={recover}><Icon name="search" />找回订单</button>} />
+    <Notice subtle>此处展示当前浏览器有权访问的订单。更换浏览器后，可用购买时的联系方式和查询密码找回订单。
       <button type="button" className="text-button" onClick={orders.reload}>刷新订单</button></Notice>
     <div className="orders-toolbar"><div className="underlined-tabs" role="group" aria-label="订单状态">
       {['全部', '待付款', '已付款', '已关闭'].map((value) => <button key={value} type="button" data-order-filter={value}
@@ -45,7 +46,7 @@ export default function OrdersPage() {
       <div className="empty-icon"><Icon name={normalized ? 'search-x' : 'receipt-text'} /></div>
       <h2>{normalized ? '没有匹配的订单' : filter === '全部' ? '还没有订单' : `暂无${filter}订单`}</h2>
       <p>{normalized ? '试试其他订单号或商品名称。' : '浏览套餐并确认服务条件，支付宝可用后即可创建订单。'}</p>
-      <div className="empty-actions"><Link className="button primary" to="/">浏览订阅套餐 <Icon name="arrow-right" /></Link><button className="button secondary" type="button" onClick={recover}><Icon name="mail" />邮箱找回</button></div>
+      <div className="empty-actions"><Link className="button primary" to="/">浏览订阅套餐 <Icon name="arrow-right" /></Link><button className="button secondary" type="button" onClick={recover}><Icon name="search" />通过密码查询</button></div>
     </div>}</div>
     {filter === '全部' && filtered.length > 0 && <section className="draft-section">
       <div className="section-heading"><div><h2>本机套餐清单 <span className="count-label">{filtered.length}</span></h2><p>仅保存在此浏览器，不是真实订单。</p></div></div>

@@ -3,12 +3,14 @@ import type { FormEvent, ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Dialog } from '../components/Dialog';
 import { Icon } from '../components/Icon';
-import { Notice } from '../components/Page';
 import { StatusBadge } from '../components/Product';
 import { useApiResource } from '../hooks/useApiResource';
 import { ApiState } from '../components/ApiState';
 import type { Product } from '../types/catalog';
-import { money, validEmail } from '../lib/format';
+import { money } from '../lib/format';
+import { validContact, validQueryPassword } from '../lib/order-input';
+import { postApi } from '../services/api';
+import type { Order } from '../types/orders';
 import { removeSelection } from '../services/selections';
 
 type ModalState = { type: 'compare' } | { type: 'recover' } | { type: 'delete-selection'; id: string } | null;
@@ -17,27 +19,32 @@ const UIContext = createContext<{
   openModal: (modal: NonNullable<ModalState>) => void;
 } | null>(null);
 
-function RecoverForm() {
-  const [email, setEmail] = useState('');
+function RecoverForm({ onClose }: { onClose: () => void }) {
+  const [contact, setContact] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const [invalid, setInvalid] = useState(false);
-  function submit(event: FormEvent) {
+  const [busy, setBusy] = useState(false);
+  async function submit(event: FormEvent) {
     event.preventDefault();
-    const valid = validEmail(email.trim());
-    setInvalid(!valid);
-    setError(valid ? '邮件服务尚未开放，未发送验证码。' : '请填写有效的联系邮箱。');
+    if (busy) return;
+    if (!validContact(contact) || !validQueryPassword(password)) { setError('请填写联系方式和 8–64 位查询密码。'); return; }
+    setBusy(true); setError('');
+    try {
+      await postApi<Order[]>('/orders/lookup', { contact: contact.trim(), queryPassword: password });
+      setPassword(''); window.dispatchEvent(new Event('wusan:orders-updated')); onClose();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : '暂时无法查询订单。'); }
+    finally { setBusy(false); }
   }
   return <>
-    <p className="modal-description">当前浏览器的订单可在“我的订单”查看。跨设备邮箱找回仍在准备中，请保留下单时的浏览器 Cookie 和订单号。</p>
-    <Notice subtle>邮箱验证尚未开放，当前不会发送验证码。</Notice>
+    <p className="modal-description">填写购买时使用的联系方式和查询密码，找回最近的对应订单。旧版未设置查询密码的订单，请使用下单浏览器或联系支持。</p>
     <form onSubmit={submit} noValidate>
-      <label htmlFor="recover-email">联系邮箱</label>
-      <input id="recover-email" name="email" type="email" autoComplete="email" maxLength={254}
-        placeholder="you@example.com" aria-describedby="recover-error" aria-invalid={invalid}
-        value={email} onChange={(event) => { setEmail(event.target.value); setError(''); setInvalid(false); }} />
+      <label htmlFor="recover-contact">联系方式</label>
+      <input id="recover-contact" name="contact" type="text" autoComplete="off" maxLength={254} placeholder="购买时填写的联系方式" disabled={busy} value={contact} onChange={event => { setContact(event.target.value); setError(''); }} />
+      <label htmlFor="recover-password" style={{ marginTop: 16 }}>查询密码</label>
+      <input id="recover-password" name="queryPassword" type="password" autoComplete="current-password" maxLength={64} placeholder="购买时设置的查询密码" disabled={busy} value={password} onChange={event => { setPassword(event.target.value); setError(''); }} />
       <p id="recover-error" className="field-error" role="alert">{error}</p>
-      <button className="button primary full-width" type="submit"><Icon name="mail" />获取验证码</button>
-      <p className="panel-footnote"><Icon name="shield-check" />仅填写邮箱不能访问私有订单</p>
+      <button className="button primary full-width spaced-button" type="submit" disabled={busy}><Icon name="search" />{busy ? '正在查询…' : '查询订单'}</button>
+      <p className="panel-footnote"><Icon name="shield-check" />验证后可在当前浏览器查看对应订单，有效期 8 小时</p>
     </form>
   </>;
 }
@@ -79,7 +86,7 @@ export function UIProvider({ children }: { children: ReactNode }) {
     {children}
     <div id="toast" className={toast ? 'visible' : ''} role="status" aria-live="polite">{toast?.message}</div>
     {modal?.type === 'compare' && <Dialog title="套餐对比" onClose={close} wide><Comparison onClose={close} /></Dialog>}
-    {modal?.type === 'recover' && <Dialog title="通过邮箱找回订单" onClose={close}><RecoverForm /></Dialog>}
+    {modal?.type === 'recover' && <Dialog title="找回订单" onClose={close}><RecoverForm onClose={close} /></Dialog>}
     {modal?.type === 'delete-selection' && <Dialog title="删除套餐草稿？" onClose={close}>
       <p className="modal-description">仅删除此浏览器中的套餐清单，不涉及订单、付款或退款。</p>
       <div className="modal-actions"><button className="button secondary" type="button" onClick={close}>取消</button>

@@ -1,0 +1,28 @@
+{
+    admin 127.0.0.1:2019
+    storage file_system {
+        root C:/ProgramData/WusanAI/caddy
+    }
+}
+wusan-ai.store {
+    encode zstd gzip
+    @private path /.env* /.git/* /server/* /deploy/* /package*.json /release.json
+    handle @private {
+        respond 403
+    }
+    handle /api/* {
+        request_body {
+            max_size 32KB
+        }
+        reverse_proxy 127.0.0.1:5182
+    }
+    handle {
+        root * C:/WusanAI/current/dist
+        @assets path /assets/*
+        header @assets Cache-Control "public, max-age=31536000, immutable"
+        @html path / /index.html
+        header @html Cache-Control "no-cache"
+        try_files {path} /index.html
+        file_server
+    }
+}

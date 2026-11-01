@@ -16,101 +16,72 @@ test('catalog categories, search, empty state and product detail entry', async (
   await page.getByRole('button', { name: '清空筛选' }).click();
   await expect(page.locator('.product-card')).toHaveCount(4);
   await expect(page.locator('.product-card .feature-list, .product-card .status-badge')).toHaveCount(0);
-  await page.locator('.product-card').first().getByRole('link', { name: '查看详情', exact: true }).click();
+  await page.locator('.product-card').first().getByRole('link', { name: '立即购买', exact: true }).click();
   await expect(page).toHaveURL(/\/products\/chatgpt-plus$/);
 });
 
-test('checkout validation, privacy and idempotent local selections', async ({ page }) => {
+test('product detail shows the requested purchase fields and validates before creating an order', async ({ page }) => {
+  await page.route('**/api/payments/config', route => route.fulfill({ json: { data: { enabled: true, environment: 'sandbox', message: '测试' } } }));
+  let calls = 0;
+  await page.route('**/api/orders', route => { calls++; return route.fulfill({ status: 503, json: { error: { message: '测试下单失败，请重试。' } } }); });
   await page.goto('/products/chatgpt-plus');
-  await expect(page.locator('.product-art .art-symbol')).toHaveText('Plus');
-  await expect(page.locator('.purchase-price')).toContainText('130');
-  await page.getByRole('tab', { name: '购买指南' }).click();
-  await expect(page.getByRole('tabpanel')).toContainText('订阅流程');
-  await page.keyboard.press('ArrowRight');
-  await expect(page.getByRole('tab', { name: '服务须知' })).toHaveAttribute('aria-selected', 'true');
-  await page.getByRole('link', { name: '核对订阅信息' }).click();
-  await expect(page).toHaveURL(/\/checkout\/chatgpt-plus$/);
-  await page.reload();
-  await expect(page.getByRole('heading', { name: '核对订阅信息' })).toBeVisible();
-  await page.getByRole('button', { name: '保存本机套餐清单' }).click();
-  await expect(page.locator('#email-error')).toContainText('有效');
-  await expect(page.locator('#terms-error')).toContainText('勾选');
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    if (attempt > 0) await page.goto('/checkout/chatgpt-plus');
-    await page.locator('#contact-email').fill('private@example.com');
-    await page.locator('#accept-terms').check();
-    await page.getByRole('button', { name: '保存本机套餐清单' }).click();
-    await expect(page).toHaveURL(/\/orders$/);
-    await expect(page.locator('.draft-row')).toHaveCount(1);
-  }
-  await expect(page.locator('#order-results')).toContainText('还没有订单');
-  const stored = await page.evaluate(() => localStorage.getItem('wusan-ai:selections:v1'));
-  expect(stored).not.toContain('private@example.com');
-  expect(stored).not.toContain('email');
-  await page.locator('#order-search').fill('unknown');
-  await expect(page.locator('.draft-row')).toHaveCount(0);
-  await page.locator('#order-search').fill('');
-  await page.getByRole('button', { name: '已付款', exact: true }).click();
-  await expect(page.locator('#order-results')).toContainText('暂无已付款订单');
-  await page.locator('[data-order-filter="全部"]').click();
-  await page.locator('.draft-row .icon-button').click();
-  await page.getByRole('button', { name: '删除草稿', exact: true }).click();
-  await expect(page.locator('.draft-row')).toHaveCount(0);
+  await expect(page.getByRole('img', { name: 'ChatGPT Plus 商品图片' })).toBeVisible();
+  await expect(page.locator('.product-buy-price')).toContainText('130');
+  await expect(page.getByRole('heading', { name: '宝贝详情' })).toBeVisible();
+  await expect(page.getByRole('radio')).toHaveCount(1);
+  await expect(page.locator('main')).not.toContainText('充值地区');
+  await expect(page.locator('main')).not.toContainText('本次办理用途');
+  await expect(page.locator('main')).not.toContainText('兑换入口');
+  await page.getByRole('button', { name: '立即购买' }).click();
+  await expect(page.locator('#contact-error')).toContainText('联系方式');
+  await expect(page.locator('#password-error')).toContainText('8–64');
+  await expect(page.locator('#terms-error')).toContainText('同意');
+  expect(calls).toBe(0);
+  await page.locator('#purchase-contact').fill('private@example.com');
+  await page.locator('#query-password').fill('test-query-password');
+  await page.locator('#accept-terms').check();
+  await page.getByRole('button', { name: '立即购买' }).click();
+  await expect(page.getByText('测试下单失败，请重试。')).toBeVisible();
+  expect(calls).toBe(1);
+  const storage = await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }));
+  expect(storage).not.toContain('test-query-password');
+  expect(storage).not.toContain('private@example.com');
 });
 
-test('unconfigured Alipay disables checkout and email recovery remains honest', async ({ page }) => {
+test('unconfigured Alipay stays disabled and password recovery reports real failures', async ({ page }) => {
   await page.goto('/checkout/chatgpt-pro-5x');
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('核对订阅信息');
-  await expect(page.locator('.summary-total')).toContainText('660');
-  await expect(page.getByRole('button', { name: '支付宝待配置' })).toBeDisabled();
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('ChatGPT Pro 5x');
+  await expect(page.locator('.product-order-total')).toContainText('660');
+  await expect(page.getByRole('button', { name: '立即购买' })).toBeDisabled();
   await page.goto('/checkout/unknown');
   await expect(page.getByRole('heading', { level: 1 })).toContainText('无法选择');
-  await page.goto('/orders/unknown');
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('无法查看');
-  await page.goto('/pay/example');
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('无法查看');
-  await page.goto('/orders/example');
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('无法查看');
+  for (const route of ['/orders/unknown', '/pay/example', '/orders/example']) {
+    await page.goto(route);
+    await expect(page.getByRole('heading', { level: 1 })).toContainText('无法查看');
+  }
   await page.goto('/orders');
-  await page.getByRole('button', { name: '通过邮箱找回' }).click();
-  await page.locator('#recover-email').fill('someone@example.com');
-  await page.getByRole('button', { name: '获取验证码' }).click();
-  await expect(page.locator('#recover-error')).toContainText('未发送');
+  await page.getByRole('button', { name: '找回订单', exact: true }).click();
+  await page.locator('#recover-contact').fill('someone@example.com');
+  await page.locator('#recover-password').fill('wrong-order-password');
+  await page.getByRole('button', { name: '查询订单' }).click();
+  await expect(page.locator('#recover-error')).toContainText('联系方式或查询密码不正确');
 });
 
-test('merchant prices agree across catalog, details, checkout and saved selections', async ({ page }) => {
+test('merchant prices agree across catalog, product purchase and checkout', async ({ page }) => {
   const plans = [
-    { id: 'chatgpt-plus', price: '130', cents: 13000 },
-    { id: 'chatgpt-pro-5x', price: '660', cents: 66000 },
-    { id: 'chatgpt-pro-20x', price: '1,150', cents: 115000 },
-    { id: 'chatgpt-pro-50x-ph', price: '3,350', cents: 335000 },
+    { id: 'chatgpt-plus', price: '130' }, { id: 'chatgpt-pro-5x', price: '660' },
+    { id: 'chatgpt-pro-20x', price: '1,150' }, { id: 'chatgpt-pro-50x-ph', price: '3,350' },
   ];
   await page.goto('/');
   for (const [index, plan] of plans.entries()) {
-    const card = page.locator('.product-card').nth(index);
-    await expect(card.locator('.price')).toContainText(plan.price);
-    await expect(card.getByRole('link', { name: '查看详情', exact: true })).toBeVisible();
+    await page.goto('/');
+    await expect(page.locator('.product-card').nth(index).locator('.price')).toContainText(plan.price);
+    for (const route of [`/products/${plan.id}`, `/checkout/${plan.id}`]) {
+      await page.goto(route);
+      await expect(page.locator('.product-buy-price')).toContainText(plan.price);
+      await expect(page.locator('.product-order-total strong')).toHaveText(`¥${plan.price}`);
+    }
   }
-  await expect(page.locator('main')).not.toContainText('示例价格');
-  for (const plan of plans) {
-    await page.goto(`/products/${plan.id}`);
-    await expect(page.locator('.purchase-price .price')).toContainText(plan.price);
-    await page.getByRole('link', { name: '核对订阅信息' }).click();
-    await expect(page.locator('.summary-total strong')).toHaveText(`¥${plan.price}`);
-    await page.locator('#contact-email').fill('private@example.com');
-    await page.locator('#accept-terms').check();
-    await page.getByRole('button', { name: '保存本机套餐清单' }).click();
-    await expect(page).toHaveURL(/\/orders$/);
-    await page.locator('.draft-row').first().getByRole('link', { name: '查看', exact: true }).click();
-    await expect(page.locator('.spec-list')).toContainText(`¥${plan.price}`);
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText('套餐草稿详情');
-  }
-  const selections = await page.evaluate(() => JSON.parse(localStorage.getItem('wusan-ai:selections:v1') || '[]'));
-  expect(selections).toHaveLength(4);
-  for (const plan of plans) {
-    expect(selections.find((item: { productId: string }) => item.productId === plan.id)).toMatchObject({ priceCents: plan.cents });
-  }
-  expect(JSON.stringify(selections)).not.toContain('private@example.com');
 });
 
 test('historical selections retain saved amounts and show the current merchant price', async ({ page }) => {
@@ -123,7 +94,7 @@ test('historical selections retain saved amounts and show the current merchant p
   await expect(page.locator('.spec-list')).toContainText('¥120');
   await expect(page.locator('main')).toContainText('当前本站售价为 ¥130');
   await page.getByRole('link', { name: '查看当前套餐' }).click();
-  await expect(page.locator('.purchase-price .price')).toContainText('130');
+  await expect(page.locator('.product-buy-price')).toContainText('130');
 });
 
 test('help full-text search, categories and reset', async ({ page }) => {
@@ -166,7 +137,7 @@ test('mobile navigation closes with Escape and restores focus', async ({ page })
   await expect(page.getByRole('button', { name: '打开导航' })).toBeFocused();
 });
 
-test('minimal hero returns to the full catalog without decorative content', async ({ page }) => {
+test('minimal hero hides the catalog button and retains category filtering', async ({ page }) => {
   await page.emulateMedia({ colorScheme: 'light' });
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/');
@@ -175,7 +146,9 @@ test('minimal hero returns to the full catalog without decorative content', asyn
   await page.locator('[data-category="Pro"]').click();
   await page.getByRole('searchbox', { name: '搜索商品' }).fill('20x');
   await expect(page.locator('.product-card')).toHaveCount(1);
-  await page.getByRole('link', { name: '浏览全部商品' }).click();
+  await expect(page.getByRole('link', { name: '浏览全部商品' })).toHaveCount(0);
+  await page.locator('[data-category="全部"]').click();
+  await page.getByRole('button', { name: '清空搜索' }).click();
   await expect(page.locator('.product-card')).toHaveCount(4);
   await expect(page.getByRole('searchbox', { name: '搜索商品' })).toHaveValue('');
   await page.goto('/');
@@ -266,10 +239,10 @@ test('product details distinguish service failure from nonexistent products', as
   }));
   await page.goto('/products/chatgpt-plus');
   await expect(page.getByRole('heading', { name: '内容加载失败' })).toBeVisible();
-  await expect(page.locator('.purchase-price')).toHaveCount(0);
+  await expect(page.locator('.product-buy-price')).toHaveCount(0);
   await page.unroute('**/api/products/chatgpt-plus');
   await page.getByRole('button', { name: '重新加载' }).click();
-  await expect(page.locator('.purchase-price')).toContainText('130');
+  await expect(page.locator('.product-buy-price')).toContainText('130');
   await page.goto('/products/no-such-product');
   await expect(page.getByRole('heading', { name: '套餐不存在或已下架' })).toBeVisible();
 });

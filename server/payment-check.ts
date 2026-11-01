@@ -1,5 +1,6 @@
 import { accessSync, constants, statSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { config, environment, projectRoot } from './config.ts';
 
 // Presence/permissions only: never read private key contents, sign a request or create a trade.
@@ -22,7 +23,15 @@ function privateFile(name: string, path?: string) {
     if (!path) throw new Error();
     const info = statSync(path);
     accessSync(path, constants.R_OK);
-    add(name, info.isFile() && info.size > 0 && (info.mode & 0o007) === 0 && (info.mode & 0o022) === 0);
+    const permissions = process.platform === 'win32'
+      ? (() => {
+        const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-File',
+          resolve(projectRoot, 'server/windows-key-acl.ps1'), '-Path', path],
+        { encoding: 'utf8', timeout: 15000, windowsHide: true });
+        return result.status === 0 && result.stdout.trim() === 'SECURE';
+      })()
+      : (info.mode & 0o007) === 0 && (info.mode & 0o022) === 0;
+    add(name, info.isFile() && info.size > 0 && permissions);
   } catch { add(name, false); }
 }
 if (production) {

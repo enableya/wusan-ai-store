@@ -4,15 +4,18 @@ import type { DatabaseSync } from 'node:sqlite';
 import { catalogRepository } from './database.ts';
 import { createAlipayGateway } from './alipay.ts';
 import type { PaymentGateway } from './alipay.ts';
-import { browserOwner, orderRepository, OrderError } from './orders.ts';
+import { browserOwner, orderRepository, OrderError, hash } from './orders.ts';
 import { readBody, readJson } from './http.ts';
 import { adminRepository } from './admin.ts';
 import { analyticsRepository } from './analytics.ts';
 
-export function createApiServer(db: DatabaseSync, gateway: PaymentGateway = createAlipayGateway(), options: { adminOrigin?: string } = {}) {
+export function createApiServer(db: DatabaseSync, gateway: PaymentGateway = createAlipayGateway(), options: { adminOrigin?: string; publicCheckoutEnabled?: boolean } = {}) {
   const catalog = catalogRepository(db);
   const orders = orderRepository(db, gateway);
   const admin = adminRepository(db, options.adminOrigin ?? process.env.ADMIN_ORIGIN ?? gateway.origin);
+  if (process.env.PUBLIC_CHECKOUT_ENABLED && !['true', 'false'].includes(process.env.PUBLIC_CHECKOUT_ENABLED)) throw new Error('PUBLIC_CHECKOUT_ENABLED must be true or false.');
+  const publicCheckoutEnabled = options.publicCheckoutEnabled ?? process.env.PUBLIC_CHECKOUT_ENABLED !== 'false';
+  const checkoutAllowed = (request: Parameters<typeof admin.current>[0]) => publicCheckoutEnabled || !!admin.current(request);
   const analytics = analyticsRepository(db, gateway.status.environment, admin.origin.startsWith('https:'));
   const limits = new Map<string, { count: number; expires: number }>();
   function rateLimit(key: string, max: number) {
@@ -75,17 +78,27 @@ export function createApiServer(db: DatabaseSync, gateway: PaymentGateway = crea
       }
       if (url.pathname === '/api/payments/config' && reading) {
         browserOwner(request, response, gateway, true);
-        return send(200, { data: gateway.status });
+        return send(200, { data: checkoutAllowed(request) ? gateway.status : {
+          ...gateway.status, enabled: false, message: '购买暂未开放，请稍后再来。',
+        } });
+      }
+      if (url.pathname === '/api/orders/lookup' && request.method === 'POST') {
+        rateLimit('order-lookup', 40);
+        const input = await readJson(request, gateway.origin);
+        rateLimit(`lookup:${hash(String(input.contact || '').trim().toLowerCase())}`, 8);
+        const browser = browserOwner(request, response, gateway, true)!;
+        return send(200, { data: await orders.lookup(browser, input) });
       }
       if (url.pathname === '/api/orders') {
         if (reading) return send(200, { data: orders.list(owner()) });
         if (request.method === 'POST') {
+          if (!checkoutAllowed(request)) return fail(503, 'CHECKOUT_CLOSED', '购买暂未开放，请稍后再来。');
           rateLimit(`create:${request.socket.remoteAddress}`, 20);
           const input = await readJson(request, gateway.origin);
           const key = request.headers['idempotency-key'];
           if (typeof key !== 'string') return fail(400, 'IDEMPOTENCY_KEY_REQUIRED', '缺少订单提交编号，请刷新后重试。');
           const browser = browserOwner(request, response, gateway, true)!;
-          return send(201, { data: orders.create(browser, input, key) });
+          return send(201, { data: await orders.create(browser, input, key) });
         }
       }
       const match = url.pathname.match(/^\/api\/orders\/(WS[0-9a-f]{20,60})(?:\/(payment|refresh|close))?$/);
@@ -97,7 +110,10 @@ export function createApiServer(db: DatabaseSync, gateway: PaymentGateway = crea
           const browser = owner();
           orders.owned(id, browser);
           rateLimit(`${action}:${browser}`, action === 'refresh' ? 30 : 20);
-          if (action === 'payment') return send(200, { data: orders.payment(id, browser) });
+          if (action === 'payment') {
+            if (!checkoutAllowed(request)) return fail(503, 'CHECKOUT_CLOSED', '购买暂未开放，请稍后再来。');
+            return send(200, { data: orders.payment(id, browser) });
+          }
           try { return send(200, { data: action === 'close' ? await orders.close(id, browser) : await orders.refresh(id, browser) }); }
           catch (error) {
             if (error instanceof OrderError) throw error;

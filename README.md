@@ -6,6 +6,12 @@ React + TypeScript + Vite 前端，Node.js + SQLite 商品与订单后端，已�
 
 React 19、TypeScript、Vite、React Router、Lucide React、Node.js 内置 HTTP / SQLite、Vitest、Node Test Runner、Playwright。
 
+## 开发与发布约定
+
+日常修改默认只在本地预览，不自动同步生产。使用 `npm run dev` 的本地地址查看页面；需要隔离的支付宝沙箱联调时，先准备独立沙箱环境配置，再运行 `npm run dev:sandbox`。本地数据库、测试订单及支付配置与服务器生产环境分开。
+
+`npm run build` 只生成本地产物，不代表部署。只有经营方明确要求“更新到生产环境”或“上线这次修改”时，才上传并切换线上版本。生产入口为 `https://wusan-ai.store`，不能用它预览尚未发布的本地修改。完整协作规则见 [AGENTS.md](AGENTS.md)。
+
 `index.html` 是 Vite 的应用入口。实际页面、组件、数据、交互和样式都位于 `src/`，不能通过双击 HTML 预览，需要启动开发服务器。
 
 ## 安装和运行

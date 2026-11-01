@@ -98,7 +98,7 @@ test('new schema and click records survive reopening without changing existing c
     db.close(); db = openDatabase(filename);
     assert.equal(db.prepare('SELECT count(*) AS n FROM product_clicks').get()!.n, 1);
     assert.equal(db.prepare('SELECT name FROM products WHERE id = ?').get('chatgpt-plus')!.name, '商家自定义名称');
-    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 5);
+    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 6);
   } finally { db.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 

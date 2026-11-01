@@ -24,7 +24,6 @@ export default function HomePage() {
       <div className="storefront-eyebrow"><span />伍叁 AI · 订阅服务</div>
       <h1 id="storefront-title">{hero.title}</h1>
       <p>找到适合自己的 AI 订阅，让选择更简单。</p>
-      <a className="button primary" href="#catalog" onClick={reset}>浏览全部商品<Icon name="arrow-right" /></a>
       </div>
       <img className="storefront-hero-logo" src="/brand/chatgpt.svg" alt="ChatGPT" width="180" height="180" />
     </section>

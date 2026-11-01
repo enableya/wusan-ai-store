@@ -14,7 +14,7 @@ export function openDatabase(filename: string) {
     db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
     db.exec('BEGIN IMMEDIATE');
     const version = (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
-    if (version > 5) throw new Error('Database schema is newer than this server supports.');
+    if (version > 6) throw new Error('Database schema is newer than this server supports.');
     if (version === 0) {
       db.exec(`
         CREATE TABLE products (
@@ -114,6 +114,19 @@ export function openDatabase(filename: string) {
       CREATE INDEX IF NOT EXISTS product_clicks_range ON product_clicks(environment, created_at);
       CREATE INDEX IF NOT EXISTS product_clicks_visitor ON product_clicks(visitor_hash, product_id, environment, created_at);
       PRAGMA user_version = 5;`);
+    }
+    if (version < 6) {
+      const columns = db.prepare('PRAGMA table_info(orders)').all().map(row => row.name);
+      if (!columns.includes('contact')) db.exec('ALTER TABLE orders ADD COLUMN contact TEXT');
+      if (!columns.includes('query_password_hash')) db.exec('ALTER TABLE orders ADD COLUMN query_password_hash TEXT');
+      db.exec(`CREATE INDEX IF NOT EXISTS orders_contact ON orders(contact);
+        CREATE TABLE IF NOT EXISTS order_access (
+          order_id TEXT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+          owner_hash TEXT NOT NULL, expires_at TEXT NOT NULL,
+          PRIMARY KEY(order_id, owner_hash)
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS order_access_expiry ON order_access(expires_at);
+        PRAGMA user_version = 6;`);
     }
     db.exec('COMMIT');
     return db;

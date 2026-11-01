@@ -23,7 +23,7 @@ for (const width of [390, 1440]) {
     await page.route('**/api/orders', async route => {
       if (route.request().method() === 'POST') {
         const body = route.request().postDataJSON();
-        expect(body).toEqual({ productId: 'chatgpt-plus', expectedPriceCents: 13000, email: 'buyer@example.com', acceptedTerms: true });
+        expect(body).toEqual({ productId: 'chatgpt-plus', expectedPriceCents: 13000, contact: 'buyer@example.com', queryPassword: 'test-query-password', acceptedTerms: true });
         expect(route.request().headers()['idempotency-key']).toBeTruthy();
         created = true;
         return route.fulfill({ status: 201, json: { data: order } });
@@ -36,12 +36,16 @@ for (const width of [390, 1440]) {
       if (path.endsWith('/refresh') && paid) order = { ...order, status: 'paid', paidAt: new Date().toISOString(), tradeNo: '2026101722000000000000000001' };
       return route.fulfill({ json: { data: order } });
     });
-    await page.goto('/checkout/chatgpt-plus');
-    await page.getByRole('button', { name: '创建订单并继续付款' }).click();
-    await expect(page.locator('#email-error')).toContainText('有效');
-    await page.locator('#contact-email').fill('buyer@example.com');
+    await page.goto('/products/chatgpt-plus');
+    await expect(page.getByRole('button', { name: '立即购买' })).toBeEnabled();
+    await page.waitForFunction(() => [...document.images].every(image => image.complete && image.naturalWidth > 0));
+    await page.screenshot({ path: `artifacts/product-detail-${width}.png`, fullPage: true });
+    await page.getByRole('button', { name: '立即购买' }).click();
+    await expect(page.locator('#contact-error')).toContainText('有效');
+    await page.locator('#purchase-contact').fill('buyer@example.com');
+    await page.locator('#query-password').fill('test-query-password');
     await page.locator('#accept-terms').check();
-    await page.getByRole('button', { name: '创建订单并继续付款' }).click();
+    await page.getByRole('button', { name: '立即购买' }).click();
     await expect(page).toHaveURL(new RegExp(`/pay/${order.id}$`));
     await expect(page.getByRole('heading', { level: 1 })).toHaveText('订单已创建，等待付款');
     await expect(page.locator('.summary-total')).toContainText('130');
@@ -72,6 +76,27 @@ for (const width of [390, 1440]) {
     expect(errors).toEqual([]);
   });
 }
+
+test('contact and query password recovery refreshes the order list without storing credentials', async ({ page }) => {
+  let recovered = false;
+  await page.route('**/api/orders', route => route.fulfill({ json: { data: recovered ? [example] : [] } }));
+  await page.route('**/api/orders/lookup', route => {
+    expect(route.request().postDataJSON()).toEqual({ contact: 'buyer@example.com', queryPassword: 'test-query-password' });
+    recovered = true;
+    return route.fulfill({ json: { data: [example] } });
+  });
+  await page.goto('/orders');
+  await expect(page.locator('.server-order-row')).toHaveCount(0);
+  await page.getByRole('button', { name: '找回订单', exact: true }).click();
+  await page.getByLabel('联系方式', { exact: true }).fill('buyer@example.com');
+  await page.getByLabel('查询密码', { exact: true }).fill('test-query-password');
+  await page.getByRole('button', { name: '查询订单' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.locator('.server-order-row')).toContainText(example.id);
+  const storage = await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }));
+  expect(storage).not.toContain('test-query-password');
+  expect(storage).not.toContain('buyer@example.com');
+});
 
 for (const environment of ['sandbox', 'production'] as const) {
   test(`${environment} payment rejects a form pointing to the other environment`, async ({ page }) => {

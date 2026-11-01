@@ -76,7 +76,7 @@ export default function PaymentPage() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : '无法打开支付宝，请重试。'); }
     finally { lock.current = false; setBusy(null); }
   }
-  if (resource.error?.status === 404) return <EmptyPage title="无法查看这个订单" description="订单不存在或当前浏览器无权访问。请使用下单时的浏览器，勿清除本站 Cookie。" button="返回我的订单" to="/orders" icon="lock-keyhole" />;
+  if (resource.error?.status === 404) return <EmptyPage title="无法查看这个订单" description="订单不存在或当前浏览器无权访问。可在我的订单中使用联系方式和查询密码找回。" button="返回我的订单" to="/orders" icon="lock-keyhole" />;
   if (!orderRef) return <EmptyPage title="正在确认支付结果" description="请在下单时的浏览器打开我的订单，通过服务端查询确认付款状态。" button="查看我的订单" to="/orders" icon="shield-check" />;
   if (!order) return <ApiState error={resource.error} retry={resource.reload} title="正在读取订单" />;
   const remaining = Math.max(0, Math.ceil((Date.parse(order.expiresAt) - now) / 1000));
@@ -100,7 +100,7 @@ export default function PaymentPage() {
         <div><dt>售后说明</dt><dd>{order.details.afterSales || '请联系经营方确认'}</dd></div>
       </dl>
       <Notice subtle>付款状态与订阅交付分别处理。本站尚未接入自动交付、邮件通知及在线退款；已付款订单请保留订单号，联系经营方办理后续服务。</Notice>
-      <p className="field-hint">订单访问凭证保存在当前浏览器的安全 Cookie 中。更换设备、清除 Cookie 后无法直接查询；邮箱验证码找回尚未开通。</p>
+      <p className="field-hint">订单访问凭证保存在当前浏览器的安全 Cookie 中。更换设备后，可在我的订单中使用购买时的联系方式和查询密码找回。</p>
     </section><aside className="purchase-panel order-summary">
       <h2>{order.status === 'paid' ? '支付结果' : '支付宝收银台'}</h2>
       <div className="summary-total"><span>订单金额</span><strong>¥{money(order.priceCents)}</strong></div>

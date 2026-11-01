@@ -174,7 +174,7 @@ test('payment migration updates unchanged built-in copy and preserves merchant e
     assert.equal(catalog.faqs()[0].answer, 'Merchant answer');
     assert.match(catalog.faqs()[1].answer, /支付宝网站支付/);
     assert.match(catalog.articles()[0].sections[3].text, /支付宝官方收银台/);
-    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 5);
+    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 6);
   } finally {
     db.close();
     for (const suffix of ['', '-wal', '-shm']) rmSync(filename + suffix, { force: true });

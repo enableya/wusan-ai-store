@@ -4,6 +4,8 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { Order } from '../src/types/orders.ts';
 import { catalogRepository } from './database.ts';
 import type { PaymentGateway, TradeResult } from './alipay.ts';
+import { hashPassword, verifyPassword, dummyPasswordHash } from './passwords.ts';
+import { normalizeContact, validContact, validQueryPassword } from '../src/lib/order-input.ts';
 
 export class OrderError extends Error {
   status: number;
@@ -45,7 +47,8 @@ export function orderRepository(db: DatabaseSync, gateway: PaymentGateway) {
   const catalog = catalogRepository(db);
   const raw = (id: string) => db.prepare('SELECT * FROM orders WHERE id = ?').get(id);
   function owned(id: string, owner: string | null) {
-    const row = owner ? db.prepare('SELECT * FROM orders WHERE id = ? AND owner_hash = ?').get(id, owner) : undefined;
+    const row = owner ? db.prepare(`SELECT * FROM orders WHERE id = ? AND (owner_hash = ? OR id IN
+      (SELECT order_id FROM order_access WHERE owner_hash = ? AND expires_at > ?))`).get(id, owner, owner, new Date().toISOString()) : undefined;
     if (!row) throw new OrderError(404, 'ORDER_NOT_FOUND', '订单不存在或当前浏览器无权访问。');
     return view(row);
   }
@@ -79,20 +82,43 @@ export function orderRepository(db: DatabaseSync, gateway: PaymentGateway) {
   }
   return {
     list(owner: string | null) {
-      return owner ? db.prepare('SELECT * FROM orders WHERE owner_hash = ? ORDER BY created_at DESC LIMIT 200').all(owner).map(view) : [];
+      return owner ? db.prepare(`SELECT * FROM orders WHERE owner_hash = ? OR id IN
+        (SELECT order_id FROM order_access WHERE owner_hash = ? AND expires_at > ?)
+        ORDER BY created_at DESC LIMIT 200`).all(owner, owner, new Date().toISOString()).map(view) : [];
     },
     owned,
-    create(owner: string, input: Record<string, unknown>, key: string) {
+    async lookup(owner: string, input: Record<string, unknown>) {
+      if (typeof input.contact !== 'string' || !validContact(input.contact) || typeof input.queryPassword !== 'string' || !validQueryPassword(input.queryPassword)) {
+        throw new OrderError(400, 'INVALID_LOOKUP', '请填写联系方式和 8–64 位查询密码。');
+      }
+      const rows = db.prepare('SELECT * FROM orders WHERE contact = ? AND query_password_hash IS NOT NULL ORDER BY created_at DESC LIMIT 50').all(normalizeContact(input.contact));
+      const found: Record<string, unknown>[] = [];
+      if (!rows.length) await verifyPassword(input.queryPassword, dummyPasswordHash);
+      for (const row of rows) if (await verifyPassword(input.queryPassword, String(row.query_password_hash))) found.push(row);
+      if (!found.length) throw new OrderError(401, 'LOOKUP_FAILED', '联系方式或查询密码不正确，或未找到对应订单。');
+      const now = new Date().toISOString();
+      const expires = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString();
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        db.prepare('DELETE FROM order_access WHERE expires_at <= ?').run(now);
+        for (const row of found) db.prepare(`INSERT INTO order_access(order_id, owner_hash, expires_at) VALUES (?, ?, ?)
+          ON CONFLICT(order_id, owner_hash) DO UPDATE SET expires_at = excluded.expires_at`).run(String(row.id), owner, expires);
+        db.exec('COMMIT');
+      } catch (error) { db.exec('ROLLBACK'); throw error; }
+      return found.map(view);
+    },
+    async create(owner: string, input: Record<string, unknown>, key: string) {
       ready();
       if (!/^[a-f0-9-]{16,80}$/i.test(key)) throw new OrderError(400, 'INVALID_IDEMPOTENCY_KEY', '请刷新页面后重新提交。');
-      if (typeof input.productId !== 'string' || typeof input.email !== 'string' || input.email.length > 254
-        || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email.trim()) || input.acceptedTerms !== true) {
-        throw new OrderError(400, 'INVALID_ORDER', '请填写有效邮箱并确认服务须知与隐私说明。');
+      if (typeof input.productId !== 'string' || typeof input.contact !== 'string' || !validContact(input.contact)
+        || typeof input.queryPassword !== 'string' || !validQueryPassword(input.queryPassword) || input.acceptedTerms !== true) {
+        throw new OrderError(400, 'INVALID_ORDER', '请填写联系方式、8–64 位查询密码，并确认服务须知与隐私说明。');
       }
-      const fingerprint = hash(JSON.stringify([input.productId, input.email.trim(), input.expectedPriceCents]));
+      const contact = normalizeContact(input.contact);
+      const fingerprint = hash(JSON.stringify([input.productId, contact, input.expectedPriceCents]));
       const existing = db.prepare('SELECT * FROM orders WHERE owner_hash = ? AND idempotency_key = ?').get(owner, key);
       if (existing) {
-        if (existing.fingerprint !== fingerprint) throw new OrderError(409, 'IDEMPOTENCY_CONFLICT', '该提交编号已用于其他订单，请刷新后重试。');
+        if (existing.fingerprint !== fingerprint || !await verifyPassword(input.queryPassword, String(existing.query_password_hash || ''))) throw new OrderError(409, 'IDEMPOTENCY_CONFLICT', '该提交编号已用于其他订单，请刷新后重试。');
         return view(existing);
       }
       const product = catalog.findProduct(input.productId);
@@ -100,14 +126,23 @@ export function orderRepository(db: DatabaseSync, gateway: PaymentGateway) {
         throw new OrderError(409, 'PRODUCT_UNAVAILABLE', '套餐已下架或暂不可购买。');
       }
       if (input.expectedPriceCents !== product.priceCents) throw new OrderError(409, 'PRICE_CHANGED', '套餐价格已更新，请刷新页面后确认新价格。');
+      const passwordHash = await hashPassword(input.queryPassword);
+      // Recheck after the asynchronous hash so concurrent retries cannot create duplicate orders.
+      const repeated = db.prepare('SELECT * FROM orders WHERE owner_hash = ? AND idempotency_key = ?').get(owner, key);
+      if (repeated) {
+        if (repeated.fingerprint !== fingerprint || !await verifyPassword(input.queryPassword, String(repeated.query_password_hash || ''))) throw new OrderError(409, 'IDEMPOTENCY_CONFLICT', '该提交编号已用于其他订单，请刷新后重试。');
+        return view(repeated);
+      }
+      const current = catalog.findProduct(input.productId);
+      if (!current?.selectable || current.priceCents !== product.priceCents) throw new OrderError(409, 'PRICE_CHANGED', '商品或价格已更新，请刷新后重试。');
       const id = `WS${Date.now()}${randomBytes(8).toString('hex')}`;
       const createdAt = new Date().toISOString();
       const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
       const snapshot = { productId: product.id, productName: product.name, priceCents: product.priceCents,
         periodMonths: product.periodMonths, details: product.details, payment: { appId: gateway.appId, sellerId: gateway.sellerId } };
       db.prepare(`INSERT INTO orders (id, owner_hash, email, snapshot, status, created_at, expires_at,
-        idempotency_key, fingerprint, environment) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`).run(
-        id, owner, input.email.trim(), JSON.stringify(snapshot), createdAt, expiresAt, key, fingerprint, gateway.status.environment);
+        idempotency_key, fingerprint, environment, contact, query_password_hash, terms_version) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, '2026-10-21')`).run(
+        id, owner, /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.contact.trim()) ? input.contact.trim() : '', JSON.stringify(snapshot), createdAt, expiresAt, key, fingerprint, gateway.status.environment, contact, passwordHash);
       return owned(id, owner);
     },
     payment(id: string, owner: string | null) {
