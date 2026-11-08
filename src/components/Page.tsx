@@ -12,10 +12,10 @@ export function Breadcrumb({ items }: { items: { label: string; to?: string }[] 
 }
 
 export function PageHeading({ title, eyebrow, description, action }: {
-  title: string; eyebrow: string; description: string; action?: ReactNode;
+  title: string; eyebrow: string; description?: string; action?: ReactNode;
 }) {
   return <div className={`page-heading ${action ? 'heading-with-action' : ''}`}>
-    <div><span className="eyebrow">{eyebrow}</span><h1>{title}</h1><p>{description}</p></div>{action}
+    <div><span className="eyebrow">{eyebrow}</span><h1>{title}</h1>{description && <p>{description}</p>}</div>{action}
   </div>;
 }
 

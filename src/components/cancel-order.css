@@ -1,0 +1,7 @@
+.server-order-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 12px; margin-left: auto; }
+.order-cancel-summary { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px 16px; margin: 16px 0; }
+.order-cancel-summary dt { color: var(--muted); }
+.order-cancel-summary dd { margin: 0; overflow-wrap: anywhere; }
+.order-cancel-error { color: var(--danger); }
+.server-order-row .order-cancellation-note { color: var(--muted); line-height: 1.6; }
+@media (max-width: 680px) { .server-order-actions { flex-basis: 100%; } }

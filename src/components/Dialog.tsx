@@ -3,8 +3,8 @@ import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon } from './Icon';
 
-export function Dialog({ title, children, onClose, wide = false }: {
-  title: string; children: ReactNode; onClose: () => void; wide?: boolean;
+export function Dialog({ title, children, onClose, wide = false, className = '' }: {
+  title: string; children: ReactNode; onClose: () => void; wide?: boolean; className?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -17,7 +17,7 @@ export function Dialog({ title, children, onClose, wide = false }: {
       if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
     };
   }, []);
-  return createPortal(<dialog ref={ref} className={`modal ${wide ? 'wide-modal' : ''}`}
+  return createPortal(<dialog ref={ref} className={`modal ${wide ? 'wide-modal' : ''} ${className}`}
     aria-labelledby={titleId} onCancel={(event) => { event.preventDefault(); onClose(); }}
     onClick={(event) => {
       if (event.target !== event.currentTarget) return;

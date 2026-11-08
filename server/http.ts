@@ -1,14 +1,14 @@
 import type { IncomingMessage } from 'node:http';
 import { OrderError } from './orders.ts';
 
-export function readBody(request: IncomingMessage): Promise<string> {
+export function readBody(request: IncomingMessage, limit = 16384): Promise<string> {
   return new Promise((resolve, reject) => {
     let size = 0;
     let tooLarge = false;
     const chunks: Buffer[] = [];
     request.on('data', (chunk: Buffer) => {
       size += chunk.length;
-      if (size > 16384) {
+      if (size > limit) {
         if (!tooLarge) reject(new OrderError(413, 'BODY_TOO_LARGE', '请求内容过长。'));
         tooLarge = true;
         chunks.length = 0;
@@ -20,7 +20,7 @@ export function readBody(request: IncomingMessage): Promise<string> {
   });
 }
 
-export async function readJson(request: IncomingMessage, origin: string) {
+export async function readJson(request: IncomingMessage, origin: string, limit?: number) {
   if (request.headers['content-type']?.split(';')[0].trim() !== 'application/json') {
     throw new OrderError(415, 'JSON_REQUIRED', '请使用 JSON 提交订单。');
   }
@@ -29,7 +29,7 @@ export async function readJson(request: IncomingMessage, origin: string) {
     throw new OrderError(403, 'INVALID_ORIGIN', '请从本站页面发起请求。');
   }
   try {
-    const input = JSON.parse(await readBody(request));
+    const input = JSON.parse(await readBody(request, limit));
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error();
     return input as Record<string, unknown>;
   } catch (error) {

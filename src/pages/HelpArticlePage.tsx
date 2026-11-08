@@ -1,6 +1,7 @@
 import { Link, useParams } from 'react-router-dom';
 import { Breadcrumb, EmptyPage } from '../components/Page';
 import { Icon } from '../components/Icon';
+import { SupportButton } from '../components/SupportButton';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { useApiResource } from '../hooks/useApiResource';
 import { ApiState } from '../components/ApiState';
@@ -22,7 +23,7 @@ export default function HelpArticlePage() {
     <div className="article-layout"><aside className="article-sidebar"><h2>帮助中心</h2>
       {articles.map((item) => <Link key={item.id} to={`/help/${item.id}`} className={item.id === article.id ? 'active' : ''} aria-current={item.id === article.id ? 'page' : undefined}>
         <Icon name={item.icon} />{item.category}<Icon name="chevron-right" />
-      </Link>)}<Link className="sidebar-support" to="/support"><Icon name="headphones" />联系支持</Link>
+      </Link>)}<SupportButton className="sidebar-support"><Icon name="headphones" />联系支持</SupportButton>
     </aside>
     <article className="article-content"><span className="eyebrow">{article.category}</span><h1>{article.title}</h1><p className="article-summary">{article.summary}</p>
       <div className="article-meta">更新于 2026 年 10 月 16 日<span>适用于当前站点</span></div>

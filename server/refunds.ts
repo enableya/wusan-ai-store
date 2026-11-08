@@ -3,13 +3,14 @@ import type { Order } from '../src/types/orders.ts';
 import type { PaymentGateway, TradeResult } from './alipay.ts';
 import { amountCents, OrderError } from './orders.ts';
 
-// Operator-only service: invoked by the local CLI, never exposed as a public customer endpoint.
+// Shared by the operator CLI and fulfillment-timeout worker; never exposed as a public customer refund endpoint.
 export function refundRepository(db: DatabaseSync, gateway: PaymentGateway) {
   function order(id: string): Order {
     if (!gateway.status.enabled) throw new Error('Alipay is not configured.');
     const row = db.prepare('SELECT * FROM orders WHERE id = ?').get(id);
     if (!row || row.status !== 'paid') throw new OrderError(409, 'ORDER_NOT_PAID', '退款需要已核实付款的订单。');
     const snapshot = JSON.parse(row.snapshot as string);
+    if (snapshot.staffCheckout) throw new OrderError(409, 'ORDER_PAYMENT_EXEMPT', '免付开通订单无需退款。');
     if (row.environment !== gateway.status.environment || snapshot.payment?.appId !== gateway.appId || snapshot.payment?.sellerId !== gateway.sellerId) {
       throw new Error('Order payment environment or merchant does not match.');
     }
@@ -30,6 +31,9 @@ export function refundRepository(db: DatabaseSync, gateway: PaymentGateway) {
       const now = new Date().toISOString();
       db.exec('BEGIN IMMEDIATE');
       try {
+        const timeout = db.prepare(`SELECT c.state,r.status FROM order_cancellations c
+          LEFT JOIN order_refund_reviews r ON r.order_id=c.order_id WHERE c.order_id=? AND c.state!='fulfilled'`).get(id);
+        if(timeout && timeout.status!=='approved') throw new OrderError(409,'REFUND_APPROVAL_REQUIRED','超时订单退款需要后台审核通过。');
         const existing = db.prepare('SELECT * FROM payment_refunds WHERE request_no = ?').get(requestNo);
         if (existing) {
           if (existing.order_id !== id || existing.amount_cents !== cents || existing.reason !== reason) throw new Error('Refund retry must reuse the original order, amount and reason.');

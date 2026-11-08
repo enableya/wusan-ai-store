@@ -1,0 +1,19 @@
+.revenue-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 24px; }
+.revenue-metrics .admin-metric strong { font-size: clamp(23px, 2.3vw, 34px); overflow-wrap: anywhere; }
+.revenue-order-counts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; padding: 0 26px; }
+.revenue-order-counts > div { background: var(--page); border-radius: 8px; padding: 16px; }
+.revenue-order-counts span { display: block; color: var(--muted); font-size: 13px; }
+.revenue-order-counts strong { display: block; margin-top: 6px; font-size: 22px; font-variant-numeric: tabular-nums; }
+.revenue-pending { margin: 0; padding: 16px 26px 22px; color: var(--muted); font-size: 13px; }
+.revenue-table-scroll { overflow: auto; max-height: 440px; }
+.revenue-table { width: 100%; min-width: 650px; border-collapse: collapse; text-align: left; font-size: 14px; }
+.revenue-table th { position: sticky; top: 0; z-index: 1; padding: 14px 22px; background: var(--soft); color: var(--muted); font-size: 13px; white-space: nowrap; }
+.revenue-table td { padding: 15px 22px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.revenue-table td small { display: block; color: var(--muted); font-size: 12px; }
+.revenue-pagination { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 10px; padding: 18px 22px; font-size: 13px; color: var(--muted); }
+.revenue-pagination .button { min-height: 38px; padding: 8px 14px; }
+@media (max-width: 760px) {
+  .revenue-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .revenue-order-counts { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-inline: 18px; }
+  .revenue-pending { padding-inline: 18px; }
+}

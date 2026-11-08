@@ -17,7 +17,7 @@
     "test:environment": "node scripts/run.mjs --test server/environment.test.ts",
     "catalog": "node scripts/run.mjs server/catalog-cli.ts",
     "admin": "node scripts/run.mjs server/admin-cli.ts",
-    "test:api": "node scripts/run.mjs --test server/api.test.ts server/payments.test.ts server/admin.test.ts",
+    "test:api": "node scripts/run.mjs --test server/api.test.ts server/payments.test.ts server/admin.test.ts server/redemptions.test.ts server/referrals.test.ts server/withdrawals.test.ts server/order-timeouts.test.ts",
     "test:runtime": "node scripts/run.mjs --test scripts/runtime.test.mjs",
     "test:dev": "node scripts/run.mjs --test scripts/dev.test.mjs",
     "build": "node scripts/run.mjs node_modules/typescript/bin/tsc -b && node scripts/run.mjs node_modules/vite/bin/vite.js build",
@@ -30,6 +30,9 @@
     "payment": "node scripts/run.mjs server/payment-cli.ts"
   },
   "dependencies": {
+    "@daypicker/react": "^10.0.2",
+    "@radix-ui/react-popover": "^1.3.1",
+    "@radix-ui/react-select": "^2.4.1",
     "alipay-sdk": "^4.14.0",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",

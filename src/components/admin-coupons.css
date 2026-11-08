@@ -1,0 +1,45 @@
+.coupon-dialog-form .select-field { margin-bottom: 16px; }
+.coupon-dialog-form .select-field > label { color: var(--text); }
+.coupon-table th:first-child { width: 24%; }
+.coupon-table th:last-child { width: 1%; }
+.coupon-product-name { min-width: 108px; }
+.coupon-code { display: flex; align-items: center; gap: 10px; }
+.coupon-code-icon {
+  display: grid;
+  flex: 0 0 30px;
+  place-items: center;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--mint);
+  color: var(--mint-text);
+}
+.coupon-code-icon svg.lucide { width: 16px; height: 16px; }
+.coupon-code code { min-width: 0; font-size: 13px; font-weight: 650; }
+.coupon-discount { color: var(--mint-text); }
+.coupon-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 20px;
+  background: var(--soft);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 550;
+  white-space: nowrap;
+}
+.coupon-status::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.coupon-status.active { background: var(--mint); color: var(--mint-text); }
+.coupon-compact { display: none; }
+
+@container admin-table (max-width: 700px) {
+  .coupon-table { --table-row-height: 48px; }
+  .coupon-table th:first-child { width: auto; }
+  .coupon-table tbody td { padding-block: 14px; vertical-align: top; }
+  .coupon-table :is(.coupon-wide, .coupon-code-icon) { display: none; }
+  .coupon-table span.coupon-compact { display: inline; }
+  .coupon-code > .coupon-compact { flex: none; }
+  .coupon-compact-details { display: grid; gap: 4px; margin-top: 8px; color: var(--muted); font-size: 12px; }
+  .coupon-table .admin-table-actions { display: grid; justify-items: end; }
+}
+.coupon-entry{margin:16px 0}.coupon-entry-row{display:flex;gap:8px}.coupon-entry-row input{flex:1;min-width:0}.coupon-entry-note{color:#64748b;font-size:14px;margin-top:8px}

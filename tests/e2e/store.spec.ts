@@ -20,7 +20,7 @@ test('catalog categories, search, empty state and product detail entry', async (
   await expect(page).toHaveURL(/\/products\/chatgpt-plus$/);
 });
 
-test('product detail shows the requested purchase fields and validates before creating an order', async ({ page }) => {
+test('product detail validates the code before opening account confirmation', async ({ page }) => {
   await page.route('**/api/payments/config', route => route.fulfill({ json: { data: { enabled: true, environment: 'sandbox', message: '测试' } } }));
   let calls = 0;
   await page.route('**/api/orders', route => { calls++; return route.fulfill({ status: 503, json: { error: { message: '测试下单失败，请重试。' } } }); });
@@ -28,31 +28,73 @@ test('product detail shows the requested purchase fields and validates before cr
   await expect(page.getByRole('img', { name: 'ChatGPT Plus 商品图片' })).toBeVisible();
   await expect(page.locator('.product-buy-price')).toContainText('130');
   await expect(page.getByRole('heading', { name: '宝贝详情' })).toBeVisible();
-  await expect(page.getByRole('radio')).toHaveCount(1);
+  await expect(page.locator('#purchase-contact, #query-password')).toHaveCount(0);
   await expect(page.locator('main')).not.toContainText('充值地区');
   await expect(page.locator('main')).not.toContainText('本次办理用途');
   await expect(page.locator('main')).not.toContainText('兑换入口');
-  await page.getByRole('button', { name: '立即购买' }).click();
-  await expect(page.locator('#contact-error')).toContainText('联系方式');
-  await expect(page.locator('#password-error')).toContainText('8–64');
-  await expect(page.locator('#terms-error')).toContainText('同意');
+  await expect(page.getByRole('radio')).toHaveCount(1);
+  const buy = page.getByRole('button', { name: '立即购买' });
+  await buy.click();
+  await expect(page.getByText('请输入正确的四位验证码。')).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  const code = await page.getByRole('button', { name: /点击更换/ }).innerText();
+  await page.getByLabel('验证码', { exact: true }).fill(code);
+  await buy.click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toContainText('信息确认');
+  const confirm = dialog.getByRole('button', { name: '继续付款' });
+  await confirm.click();
+  const message = dialog.locator('.app-message');
+  await expect(message).toContainText('联系方式');
+  await expect(message).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  expect((await message.boundingBox())?.y).toBeLessThan(40);
+  await expect(dialog.locator('#purchase-contact')).toBeFocused();
+  await dialog.locator('#purchase-contact').fill('private@example.com');
+  await confirm.click();
+  await expect(message).toContainText('6–14');
+  await expect(dialog.getByRole('checkbox')).toHaveCount(0);
   expect(calls).toBe(0);
-  await page.locator('#purchase-contact').fill('private@example.com');
-  await page.locator('#query-password').fill('test-query-password');
-  await page.locator('#accept-terms').check();
-  await page.getByRole('button', { name: '立即购买' }).click();
-  await expect(page.getByText('测试下单失败，请重试。')).toBeVisible();
+  await dialog.locator('#query-password').fill('query123');
+  await confirm.click();
+  await expect(dialog.getByRole('alert')).toHaveText('测试下单失败，请重试。');
   expect(calls).toBe(1);
   const storage = await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }));
-  expect(storage).not.toContain('test-query-password');
+  expect(storage).not.toContain('query123');
   expect(storage).not.toContain('private@example.com');
 });
 
-test('unconfigured Alipay stays disabled and password recovery reports real failures', async ({ page }) => {
+test('sandbox checkout can be previewed before Alipay is enabled and password recovery reports real failures', async ({ page }) => {
+  let environment = 'sandbox';
+  const message = '支付宝沙箱尚未启用，暂不能创建订单或付款。';
+  await page.route('**/api/payments/config', route => route.fulfill({ json: { data: { enabled: false, environment, message } } }));
+  let orderAttempts = 0;
+  await page.route('**/api/orders', route => {
+    if (route.request().method() === 'POST') orderAttempts++;
+    return route.continue();
+  });
+  await page.goto('/products/chatgpt-plus');
+  const buy = page.getByRole('button', { name: '立即购买' });
+  await expect(buy).toBeEnabled();
+  const code = await page.getByRole('button', { name: /点击更换/ }).innerText();
+  await page.getByLabel('验证码', { exact: true }).fill(code);
+  await buy.click();
+  const checkout = page.getByRole('dialog');
+  await expect(checkout.getByLabel('优惠码（选填）')).toBeVisible();
+  await expect(checkout.getByRole('button', { name: '继续付款' })).toBeDisabled();
+
   await page.goto('/checkout/chatgpt-pro-5x');
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('ChatGPT Pro 5x');
   await expect(page.locator('.product-order-total')).toContainText('660');
-  await expect(page.getByRole('button', { name: '立即购买' })).toBeDisabled();
+  await buy.click();
+  await expect(page.locator('.app-message')).toContainText(message);
+  expect(orderAttempts).toBe(0);
+
+  environment = 'production';
+  for (const route of ['/products/chatgpt-plus', '/checkout/chatgpt-plus']) {
+    await page.goto(route);
+    await expect(page.getByText('支付宝收款暂未开放。')).toBeVisible();
+    await expect(buy).toBeDisabled();
+  }
   await page.goto('/checkout/unknown');
   await expect(page.getByRole('heading', { level: 1 })).toContainText('无法选择');
   for (const route of ['/orders/unknown', '/pay/example', '/orders/example']) {
@@ -64,7 +106,7 @@ test('unconfigured Alipay stays disabled and password recovery reports real fail
   await page.locator('#recover-contact').fill('someone@example.com');
   await page.locator('#recover-password').fill('wrong-order-password');
   await page.getByRole('button', { name: '查询订单' }).click();
-  await expect(page.locator('#recover-error')).toContainText('联系方式或查询密码不正确');
+  await expect(page.getByRole('dialog').getByRole('alert')).toContainText('联系方式或查询密码不正确');
 });
 
 test('merchant prices agree across catalog, product purchase and checkout', async ({ page }) => {

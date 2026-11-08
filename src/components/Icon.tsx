@@ -2,8 +2,8 @@ import {
   ArrowLeft, ArrowLeftRight, ArrowRight, ArrowUp, ArrowUpRight, BookOpen,
   Bookmark, CalendarDays, Check, ChevronRight, CircleCheck, ClipboardList,
   Columns3, CreditCard, FileQuestion, Headphones, Infinity, Info, Layers,
-  ListChecks, LockKeyhole, Mail, Menu, MessageCircle, Monitor, Moon, Orbit,
-  Package, PackageX, Plus, ReceiptText, RefreshCw, Search, SearchX, Send, ShieldCheck,
+  ListChecks, LockKeyhole, LogIn, LogOut, Mail, Menu, MessageCircle, Monitor, Moon, Orbit,
+  Package, PackageX, Plus, ReceiptText, RefreshCw, Search, SearchX, Send, Share2, ShieldCheck,
   Sparkles, Sun, SunMoon, Trash2, UserRound, X,
 } from 'lucide-react';
 
@@ -14,10 +14,10 @@ const icons = {
   'circle-check': CircleCheck, 'clipboard-list': ClipboardList, 'columns-3': Columns3,
   'credit-card': CreditCard, 'file-question': FileQuestion, headphones: Headphones,
   infinity: Infinity, info: Info, layers: Layers, 'list-checks': ListChecks,
-  'lock-keyhole': LockKeyhole, mail: Mail, menu: Menu, 'message-circle': MessageCircle,
+  'lock-keyhole': LockKeyhole, 'log-in': LogIn, 'log-out': LogOut, mail: Mail, menu: Menu, 'message-circle': MessageCircle,
   monitor: Monitor, moon: Moon, orbit: Orbit, package: Package, 'package-x': PackageX,
   plus: Plus, 'receipt-text': ReceiptText, 'refresh-cw': RefreshCw, search: Search, 'search-x': SearchX,
-  send: Send, 'shield-check': ShieldCheck, sparkles: Sparkles, sun: Sun, 'sun-moon': SunMoon,
+  send: Send, share: Share2, 'shield-check': ShieldCheck, sparkles: Sparkles, sun: Sun, 'sun-moon': SunMoon,
   'trash-2': Trash2, 'user-round': UserRound, x: X,
 };
 

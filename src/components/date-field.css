@@ -1,0 +1,64 @@
+.date-field {
+  display: grid;
+  gap: 6px;
+  width: 156px;
+  min-width: 0;
+}
+.date-field > label {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+.date-field-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.date-field-trigger svg { flex: none; color: var(--muted); }
+.date-field-trigger:hover, .date-field-trigger[data-state="open"] { border-color: var(--green); }
+.date-field-trigger:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.date-field-calendar {
+  z-index: 60;
+  max-width: calc(100vw - 20px);
+  max-height: var(--radix-popover-content-available-height);
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 8px 24px rgb(15 23 42 / 14%);
+}
+.date-field-calendar .rdp-root {
+  --rdp-accent-color: var(--green);
+  --rdp-day-width: 36px;
+  --rdp-day-height: 36px;
+  --rdp-day_button-width: 34px;
+  --rdp-day_button-height: 34px;
+  --rdp-day_button-border-radius: 7px;
+  --rdp-nav_button-width: 32px;
+  --rdp-nav_button-height: 32px;
+  font-size: 14px;
+}
+.date-field-calendar .rdp-caption_label { font-size: 15px; font-weight: 650; }
+.date-field-calendar .rdp-weekday { color: var(--muted); }
+.date-field-calendar .rdp-day_button:hover:not(:disabled) { background: var(--mint); }
+.date-field-calendar .rdp-selected .rdp-day_button {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: white;
+  font-size: 14px;
+}
+.date-field-calendar button:focus-visible { outline-width: 2px; outline-offset: 0; }

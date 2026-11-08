@@ -1,0 +1,93 @@
+.shared-admin-table-frame {
+  container: admin-table / inline-size;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.shared-admin-table {
+  --table-row-height: 60px;
+  --table-cell-inset: 16px;
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  color: var(--text);
+  text-align: start;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.shared-admin-table tr { height: var(--table-row-height); }
+.shared-admin-table :is(th, td) {
+  padding: 10px var(--table-cell-inset);
+  text-align: inherit;
+  vertical-align: middle;
+}
+.shared-admin-table thead th {
+  background: color-mix(in srgb, var(--primary) 8%, var(--surface));
+  border-bottom: 1px solid color-mix(in srgb, var(--primary) 20%, var(--line));
+  color: var(--mint-text);
+  font-weight: 650;
+  white-space: nowrap;
+}
+.shared-admin-table tbody tr + tr td { border-top: 1px solid var(--line); }
+.shared-admin-table tbody tr:hover,
+.shared-admin-table tbody tr:focus-within {
+  background: color-mix(in srgb, var(--primary) 4%, var(--surface));
+}
+.shared-admin-table td { overflow-wrap: anywhere; }
+.shared-admin-table :is(th, td).admin-table-end { text-align: end; }
+.admin-table-number { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.admin-table-secondary { color: var(--muted); font-size: 12px; font-weight: 400; }
+
+.admin-table-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  white-space: nowrap;
+}
+.admin-table-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 32px;
+  padding: 4px 8px;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 550;
+}
+.admin-table-actions button:hover { background: var(--soft); color: var(--text); }
+.admin-table-actions button:focus-visible { outline-offset: 1px; }
+.admin-table-actions svg.lucide { width: 14px; height: 14px; }
+.admin-table-actions .admin-table-edit { background: var(--mint); color: var(--mint-text); }
+.admin-table-actions .admin-table-edit:hover { background: color-mix(in srgb, var(--primary) 16%, var(--surface)); color: var(--mint-text); }
+.admin-table-actions .admin-table-delete { color: var(--danger); }
+.admin-table-actions .admin-table-delete:hover { background: var(--rose-soft); color: var(--danger); }
+
+.admin-table-empty {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  padding: 36px 16px;
+  text-align: center;
+}
+.admin-table-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  margin-bottom: 5px;
+  border-radius: 11px;
+  background: var(--mint);
+  color: var(--mint-text);
+}
+.admin-table-empty p { margin: 0; }
+
+@container admin-table (max-width: 760px) {
+  .shared-admin-table { --table-cell-inset: 12px; }
+}

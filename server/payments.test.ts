@@ -20,16 +20,18 @@ const env = {
 };
 const gateway = createAlipayGateway(env, { sandboxPath: null });
 const key = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
-const input = { productId: 'chatgpt-plus', expectedPriceCents: 13000, contact: 'private@example.com', queryPassword: 'test-order-password', acceptedTerms: true };
+const input = { productId: 'chatgpt-plus', expectedPriceCents: 13000, contact: 'private@example.com', queryPassword: 'query6' };
 
 async function setup(t: TestContext, enabled = true, publicCheckoutEnabled = true) {
   const db = openDatabase(':memory:');
   let trade: TradeResult | null = null;
   let queryError = false;
+  let closeCalls = 0;
+  let closeError = false;
   const server = createApiServer(db, enabled ? { ...gateway, async query() {
     if (queryError) throw new Error('Network failure');
     return trade;
-  } } : createAlipayGateway({}), { publicCheckoutEnabled });
+  }, async close(order) { closeCalls++; if(closeError)throw new Error('Close timeout'); return {out_trade_no:order.id}; } } : createAlipayGateway({}), { publicCheckoutEnabled });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const address = server.address();
@@ -60,7 +62,8 @@ async function setup(t: TestContext, enabled = true, publicCheckoutEnabled = tru
     return fetch(`${base}/api/payments/alipay/notify`, { method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(values) });
   }
-  return { db, request, notify, base, setTrade: (value: TradeResult | null) => { trade = value; }, setQueryError: () => { queryError = true; } };
+  return { db, request, notify, base, setTrade: (value: TradeResult | null) => { trade = value; }, setQueryError: () => { queryError = true; },
+    closeCalls:()=>closeCalls, setCloseError:()=>{closeError=true;} };
 }
 
 test('unconfigured checkout stays disabled and never persists a payable order', async t => {
@@ -74,6 +77,50 @@ test('unconfigured checkout stays disabled and never persists a payable order', 
   assert.doesNotMatch(JSON.stringify(status.body), /privateKey|sellerId|appId/);
 });
 
+test('staff checkout requires both accounts for binding and only the linked customer can redeem', async t => {
+  const { db, request } = await setup(t, false, false);
+  const customer = { username: 'linzhenglian', password: 'customer-test-password' };
+  const adminPassword = 'staff-admin-test-password';
+  const payload = { productId: 'chatgpt-plus' };
+  const registration = await request('/api/customer/register', customer, { cookie: '' });
+  assert.equal(registration.response.status, 200);
+  const cookies = registration.response.headers.getSetCookie().map(value => value.split(';')[0]);
+  const browserCookie = cookies.find(value => value.startsWith('wusan_browser='))!;
+  const customerCookie = cookies.find(value => value.startsWith('wusan_customer='))!;
+  assert.equal((await request('/api/orders/staff-checkout', payload, { cookie: customerCookie })).response.status, 403);
+  assert.equal((await request('/api/admin/staff-checkout', { linked: true }, { cookie: customerCookie })).response.status, 401);
+
+  db.prepare("INSERT INTO admin_accounts(username,password_hash,created_at,role) VALUES (?,?,?,'super_admin')")
+    .run(customer.username, await hashAdminPassword(adminPassword), new Date().toISOString());
+  const login = await request('/api/admin/login', { username: customer.username, password: adminPassword });
+  const adminCookie = login.response.headers.get('set-cookie')!.split(';')[0];
+  assert.equal((await request('/api/admin/staff-checkout', { linked: true }, { cookie: adminCookie })).response.status, 409);
+  const linked = await request('/api/admin/staff-checkout', { linked: true }, { cookie: `${adminCookie}; ${customerCookie}` });
+  assert.equal(linked.response.status, 200);
+
+  const created = await request('/api/orders/staff-checkout', payload, { cookie: customerCookie });
+  assert.equal(created.response.status, 201);
+  const order = created.body.data;
+  assert.equal(order.staffCheckout, true);
+  assert.equal(order.priceCents, 0);
+  assert.equal(order.paidAt, null);
+  assert.equal(order.tradeNo, null);
+  assert.equal((await request('/api/orders/staff-checkout', payload, { cookie: customerCookie })).body.data.id, order.id);
+  assert.equal((await request(`/api/orders/${order.id}/redemption`, undefined, { cookie: browserCookie })).response.status, 404);
+  assert.equal((await request(`/api/orders/${order.id}/redemption`, undefined, { cookie: customerCookie })).response.status, 200);
+  assert.equal((await request(`/api/orders/${order.id}/payment`, {}, { cookie: customerCookie })).response.status, 409);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM referral_orders').get()!.n, 0);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM coupon_orders').get()!.n, 0);
+  const report = await request<{ grossCents: number; paidOrders: number; created: { total: number } }>('/api/admin/revenue', undefined, { cookie: adminCookie });
+  assert.equal(report.body.data.grossCents, 0);
+  assert.equal(report.body.data.paidOrders, 0);
+  assert.equal(report.body.data.created.total, 0);
+
+  assert.equal((await request('/api/admin/staff-checkout', { linked: false }, { cookie: adminCookie })).response.status, 200);
+  assert.equal((await request(`/api/orders/${order.id}/redemption`, undefined, { cookie: customerCookie })).response.status, 404);
+  assert.equal((await request('/api/orders/staff-checkout', payload, { cookie: customerCookie })).response.status, 403);
+});
+
 test('closed public checkout permits authenticated acceptance tests and still processes signed notifications', async t => {
   const { request, db, notify } = await setup(t, true, false);
   const status = await request<PaymentConfig>('/api/payments/config');
@@ -81,11 +128,15 @@ test('closed public checkout permits authenticated acceptance tests and still pr
   const ownerCookie = status.response.headers.get('set-cookie')!.split(';')[0];
   assert.equal((await request('/api/orders', input)).response.status, 503);
   assert.equal(db.prepare('SELECT count(*) AS n FROM orders').get()!.n, 0);
-  db.prepare('INSERT INTO admin_accounts VALUES (?,?,?)').run('admin', await hashAdminPassword('acceptance-admin-password'), new Date().toISOString());
+  db.prepare("INSERT INTO admin_accounts(username,password_hash,created_at,permissions) VALUES (?,?,?,'[\"checkout.test\"]')").run('admin', await hashAdminPassword('acceptance-admin-password'), new Date().toISOString());
   const login = await request('/api/admin/login', { username: 'admin', password: 'acceptance-admin-password' });
   assert.equal(login.response.status, 200);
   const adminCookie = login.response.headers.get('set-cookie')!.split(';')[0];
   const cookie = `${ownerCookie}; ${adminCookie}`;
+  db.prepare("UPDATE admin_accounts SET permissions = '[]' WHERE username = 'admin'").run();
+  assert.equal((await request<PaymentConfig>('/api/payments/config', undefined, { cookie })).body.data.enabled, false);
+  assert.equal((await request('/api/orders', input, { cookie })).response.status, 503);
+  db.prepare("UPDATE admin_accounts SET permissions = '[\"checkout.test\"]' WHERE username = 'admin'").run();
   assert.equal((await request<PaymentConfig>('/api/payments/config', undefined, { cookie })).body.data.enabled, true);
   const created = await request('/api/orders', input, { cookie });
   assert.equal(created.response.status, 201);
@@ -99,10 +150,10 @@ test('closed public checkout permits authenticated acceptance tests and still pr
   assert.equal((await request('/api/orders', input, { cookie, key: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff' })).response.status, 503);
 });
 
-test('server prices, product availability, consent and JSON origin are enforced', async t => {
+test('server prices, product availability and JSON origin are enforced', async t => {
   const { request, db } = await setup(t);
   await request('/api/payments/config');
-  for (const body of [{ ...input, expectedPriceCents: 1 }, { ...input, contact: 'bad' }, { ...input, queryPassword: 'short' }, { ...input, queryPassword: '        ' }, { ...input, queryPassword: undefined }, { ...input, acceptedTerms: false }]) {
+  for (const body of [{ ...input, expectedPriceCents: 1 }, { ...input, contact: 'bad' }, { ...input, queryPassword: 'short' }, { ...input, queryPassword: '123456789012345' }, { ...input, queryPassword: '        ' }, { ...input, queryPassword: undefined }]) {
     assert.ok([400, 409].includes((await request('/api/orders', body)).response.status));
   }
   assert.equal((await request('/api/orders', input, { origin: 'https://evil.example' })).response.status, 403);
@@ -122,7 +173,7 @@ test('order creation is idempotent, private and preserves immutable product snap
   assert.equal(db.prepare('SELECT terms_version FROM orders WHERE id = ?').get(order.id)!.terms_version, '2026-10-21');
   assert.equal((await request('/api/orders', input)).body.data.id, order.id);
   assert.equal((await request('/api/orders', { ...input, contact: 'changed@example.com' })).response.status, 409);
-  assert.equal((await request('/api/orders', { ...input, queryPassword: 'different-password' })).response.status, 409);
+  assert.equal((await request('/api/orders', { ...input, queryPassword: 'different123' })).response.status, 409);
   db.prepare('UPDATE products SET price_cents = 13100, name = ? WHERE id = ?').run('Changed', input.productId);
   const detail = await request(`/api/orders/${order.id}`);
   assert.equal(detail.body.data.productName, 'ChatGPT Plus');
@@ -138,7 +189,7 @@ test('contact and password lookup grants only matching orders and expires withou
   const config = await request('/api/payments/config');
   const originalCookie = config.response.headers.get('set-cookie')!.split(';')[0];
   const first = (await request('/api/orders', input)).body.data;
-  const second = (await request('/api/orders', { ...input, queryPassword: 'another-order-password' }, { key: 'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee' })).body.data;
+  const second = (await request('/api/orders', { ...input, queryPassword: 'another123' }, { key: 'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee' })).body.data;
   const row = db.prepare('SELECT * FROM orders WHERE id = ?').get(first.id)!;
   assert.match(String(row.query_password_hash), /^scrypt:/);
   assert.notEqual(row.query_password_hash, input.queryPassword);
@@ -247,7 +298,11 @@ test('sandbox and production orders cannot share a payment context', async t => 
   await request('/api/payments/config');
   const order = (await request('/api/orders', input)).body.data as Order;
   db.prepare("UPDATE orders SET environment = 'production' WHERE id = ?").run(order.id);
-  assert.equal((await request(`/api/orders/${order.id}/payment`, {})).response.status, 409);
+  assert.deepEqual((await request('/api/orders')).body.data, []);
+  assert.equal((await request(`/api/orders/${order.id}`)).response.status, 404);
+  assert.equal((await request(`/api/orders/${order.id}/payment`, {})).response.status, 404);
+  assert.equal((await request('/api/orders/lookup', input)).response.status, 401);
+  assert.equal((await request('/api/orders', input)).response.status, 409);
 });
 
 test('malformed, oversized and cross-site requests cannot create orders', async t => {
@@ -354,6 +409,63 @@ test('closing queries first and never closes an already paid trade', async t => 
   assert.equal((await request(`/api/orders/${order.id}/close`, {})).body.data.status, 'paid');
 });
 
+test('customer cancellation checks ownership and origin, closes unpaid trades, persists cancellation and accepts retries',async t=>{
+  const {request,db,setTrade,closeCalls}=await setup(t);
+  const order=(await request('/api/orders',input)).body.data;
+  assert.equal(order.cancelAction,'cancel');
+  const path=`/api/orders/${order.id}/cancel`;
+  assert.equal((await request(path,{expectedAction:'cancel'},{cookie:''})).response.status,404);
+  assert.equal((await request(path,{expectedAction:'cancel'},{origin:'https://evil.example'})).response.status,403);
+  assert.equal((await request(path,{expectedAction:'request_refund'})).response.status,409);
+  setTrade({out_trade_no:order.id,total_amount:'130.00',trade_status:'WAIT_BUYER_PAY'});
+  const cancelled=await request(path,{expectedAction:'cancel'});
+  assert.equal(cancelled.response.status,200);assert.equal(cancelled.body.data.status,'cancelled');assert.equal(cancelled.body.data.cancelAction,null);
+  assert.equal(cancelled.body.data.cancellation?.message,'未付款订单已取消，无需退款。');assert.equal(closeCalls(),1);
+  assert.equal((await request(path,{expectedAction:'cancel'})).body.data.status,'cancelled');assert.equal(closeCalls(),1);
+  assert.equal((await request<Order[]>('/api/orders')).body.data[0].status,'cancelled');
+  assert.equal((await request(`/api/orders/${order.id}/payment`,{})).response.status,409);
+  assert.equal(db.prepare('SELECT count(*) n FROM payment_refunds').get()!.n,0);
+});
+
+test('a payment found while canceling or arriving after cancellation is preserved and never silently refunded',async t=>{
+  const {request,setTrade,notify,db,closeCalls}=await setup(t);
+  const order=(await request('/api/orders',input)).body.data;
+  const path=`/api/orders/${order.id}/cancel`;
+  setTrade({out_trade_no:order.id,total_amount:'130.00',trade_no:'2026101722000000000000000001',trade_status:'TRADE_SUCCESS'});
+  assert.equal((await request(path,{expectedAction:'cancel'})).body.data.status,'paid');assert.equal(closeCalls(),0);
+  assert.equal(db.prepare('SELECT count(*) n FROM order_refund_reviews').get()!.n,0);
+  assert.equal((await request(path,{expectedAction:'cancel'})).response.status,409);
+  const second=(await request('/api/orders',{...input,contact:'second@example.invalid'},{key:'bbbbbbbb-cccc-dddd-eeee-ffffffffffff'})).body.data;
+  setTrade(null);assert.equal((await request(`/api/orders/${second.id}/cancel`,{expectedAction:'cancel'})).body.data.status,'cancelled');
+  assert.equal((await notify({out_trade_no:second.id,trade_no:'2026101722000000000000000002'})).status,200);
+  const late=(await request(`/api/orders/${second.id}`)).body.data;
+  assert.equal(late.status,'paid');assert.equal(late.cancellation,undefined);assert.equal(late.cancelAction,'request_refund');
+  assert.equal(db.prepare('SELECT count(*) n FROM payment_refunds').get()!.n,0);
+});
+
+test('uncertain payment queries and failed close calls cannot mark a customer order canceled',async t=>{
+  const first=await setup(t);const order=(await first.request('/api/orders',input)).body.data;
+  first.setQueryError();assert.equal((await first.request(`/api/orders/${order.id}/cancel`,{expectedAction:'cancel'})).response.status,502);
+  assert.equal((await first.request(`/api/orders/${order.id}`)).body.data.status,'pending');
+  const second=await setup(t);const other=(await second.request('/api/orders',input)).body.data;
+  second.setTrade({out_trade_no:other.id,total_amount:'130.00',trade_status:'WAIT_BUYER_PAY'});second.setCloseError();
+  assert.equal((await second.request(`/api/orders/${other.id}/cancel`,{expectedAction:'cancel'})).response.status,502);
+  assert.equal(second.db.prepare('SELECT count(*) n FROM order_cancellations').get()!.n,0);
+});
+
+test('an owned paid order can request cancellation before timeout and creates exactly one pending refund review',async t=>{
+  const {request,notify,db}=await setup(t);const order=(await request('/api/orders',input)).body.data;
+  await notify({out_trade_no:order.id});
+  assert.equal((await request(`/api/orders/${order.id}`)).body.data.cancelAction,'request_refund');
+  const path=`/api/orders/${order.id}/cancel`;
+  assert.equal((await request(path,{expectedAction:'request_refund'},{cookie:''})).response.status,404);
+  const result=await request(path,{expectedAction:'request_refund'});
+  assert.equal(result.response.status,200);assert.equal(result.body.data.status,'cancelled');assert.equal(result.body.data.cancellation?.state,'refund_review');
+  assert.match(result.body.data.cancellation!.message,/用户申请取消/);
+  await request(path,{expectedAction:'request_refund'});
+  assert.equal(db.prepare('SELECT count(*) n FROM order_refund_reviews').get()!.n,1);assert.equal(db.prepare('SELECT count(*) n FROM payment_refunds').get()!.n,0);
+});
+
 test('refund reservations survive unknown results, enforce limits and immutable retries', async t => {
   const { request, notify, db } = await setup(t);
   await request('/api/payments/config');
@@ -381,4 +493,51 @@ test('refund reservations survive unknown results, enforce limits and immutable 
   assert.equal((await refunds.query('refund-001')).status, 'success');
   assert.equal((await refunds.request(order.id, 'refund-001', '80.00', 'Customer request')).status, 'success');
   assert.equal(calls, 2);
+});
+
+test('coupons validate product, threshold and environment; orders reserve limited uses and pay the discounted amount', async t => {
+  const { db, request, notify } = await setup(t);
+  db.prepare(`INSERT INTO coupons(id,code,environment,product_id,min_cents,discount_cents,usage_limit,created_at) VALUES (?,?,?,?,?,?,?,?)`).run('coupon-1','SAVE5','sandbox','chatgpt-plus',10000,500,1,new Date().toISOString());
+  await request('/api/payments/config');
+  assert.equal((await request('/api/coupons/quote', { code: 'save5', productId: 'chatgpt-pro-5x' })).response.status, 400);
+  const quote = await request<{ payableCents: number }>('/api/coupons/quote', { code: 'save5', productId: 'chatgpt-plus' });
+  assert.equal(quote.body.data.payableCents, 12500);
+  const order = await request('/api/orders', { ...input, couponCode: 'save5', expectedDiscountCents: 500, priceCents: 1 });
+  assert.equal(order.response.status, 201);
+  assert.equal(order.body.data.priceCents, 12500);
+  assert.equal((await request('/api/orders', { ...input, couponCode: 'save5', expectedDiscountCents: 500 })).body.data.id, order.body.data.id);
+  assert.equal((await request('/api/orders', { ...input, couponCode: 'SAVE5', expectedDiscountCents: 500 }, { key: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff' })).response.status, 409);
+  assert.equal((await notify({ out_trade_no: order.body.data.id, total_amount: '130.00' })).status, 400);
+  assert.equal((await notify({ out_trade_no: order.body.data.id, total_amount: '125.00' })).status, 200);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM coupon_orders').get()!.n, 1);
+});
+
+test('coupon management requires permission and validates restrictions', async t => {
+  const { db, request } = await setup(t);
+  assert.equal((await request('/api/admin/coupons')).response.status, 401);
+  db.prepare("INSERT INTO admin_accounts(username,password_hash,created_at,permissions) VALUES (?,?,?,'[]')").run('couponadmin', await hashAdminPassword('coupon-password-123'), new Date().toISOString());
+  const login = await request('/api/admin/login', { username: 'couponadmin', password: 'coupon-password-123' });
+  const cookie = login.response.headers.get('set-cookie')!.split(';')[0];
+  assert.equal((await request('/api/admin/coupons', undefined, { cookie })).response.status, 403);
+  db.prepare(`UPDATE admin_accounts SET permissions='["coupons.manage"]' WHERE username='couponadmin'`).run();
+  const coupon = { productId: null, minCents: 1000, discountCents: 500, usageLimit: 10 };
+  assert.equal((await request('/api/admin/coupons', { ...coupon, usageLimit: 0 }, { cookie })).response.status, 400);
+  const created = await request<{ id: string; code: string }>('/api/admin/coupons', coupon, { cookie });
+  assert.equal(created.response.status, 201);
+  const { id, code } = created.body.data;
+  assert.match(code, /^WS-[A-F0-9]{16}$/);
+  const second = await request<{ code: string }>('/api/admin/coupons', { ...coupon, code }, { cookie });
+  assert.equal(second.response.status, 201);
+  assert.notEqual(second.body.data.code, code);
+  assert.equal((await request('/api/coupons/quote', { code: code.toLowerCase(), productId: 'chatgpt-plus' })).response.status, 200);
+  const edited = { ...coupon, code: 'REPLACEMENT', discountCents: 600 };
+  assert.equal((await request(`/api/admin/coupons/${id}/update`, edited, { cookie })).response.status, 200);
+  assert.equal(db.prepare('SELECT code FROM coupons WHERE id=?').get(id)?.code, code);
+  assert.equal((await request('/api/orders', { ...input, couponCode: code, expectedDiscountCents: 500 })).body.error.code, 'COUPON_CHANGED');
+  const order = await request('/api/orders', { ...input, couponCode: code, expectedDiscountCents: 600 });
+  assert.equal(order.body.data.priceCents, 12400);
+  assert.equal((await request(`/api/admin/coupons/${id}/update`, { ...edited, usageLimit: 0 }, { cookie })).response.status, 400);
+  assert.equal((await request(`/api/admin/coupons/${id}/delete`, {}, { cookie })).response.status, 200);
+  assert.equal((await request('/api/coupons/quote', { code, productId: 'chatgpt-plus' })).response.status, 400);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM coupon_orders WHERE coupon_id=?').get(id)!.n, 1);
 });

@@ -1,5 +1,6 @@
 import { Link, useParams } from 'react-router-dom';
 import { Icon } from '../components/Icon';
+import { SupportButton } from '../components/SupportButton';
 import { Breadcrumb, EmptyPage, Notice, PageHeading } from '../components/Page';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { useSelections } from '../hooks/useSelections';
@@ -41,7 +42,7 @@ function DraftDetail() {
       </ol>
     </section><aside className="purchase-panel"><h2>清单操作</h2><p className="body-copy">此清单不是订单。下单前需重新核对当前价格与服务条件，请勿提交账号密码或完整登录凭据。</p>
       {product?.selectable && <Link className="button primary full-width" to={`/checkout/${selection.productId}`}>按当前价格下单</Link>}
-      <Link className="button secondary full-width spaced-button" to="/support"><Icon name="headphones" />联系支持</Link>
+      <SupportButton className="button secondary full-width spaced-button"><Icon name="headphones" />联系支持</SupportButton>
       <Link className="text-button spaced-button" to="/orders"><Icon name="arrow-left" />返回我的订单</Link>
     </aside></div>
   </div>;

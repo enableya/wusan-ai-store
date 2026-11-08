@@ -3,7 +3,7 @@ import { config } from './config.ts';
 import { openDatabase } from './database.ts';
 
 const db = openDatabase(config.databasePath);
-const server = createApiServer(db);
+const server = createApiServer(db, undefined, { fulfillmentMonitor: true });
 server.on('error', (error) => {
   console.error('API startup failed:', error.message);
   db.close();
@@ -18,7 +18,7 @@ let stopping = false;
 function shutdown() {
   if (stopping) return;
   stopping = true;
-  server.close(() => { db.close(); });
+  server.close(() => { void server.stopFulfillmentMonitor().finally(() => db.close()); });
   server.closeIdleConnections();
   setTimeout(() => process.exit(1), 10000).unref();
 }

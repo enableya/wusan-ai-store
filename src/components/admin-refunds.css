@@ -1,0 +1,11 @@
+.refund-review-filters { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto; }
+.refund-review-table { min-width: 1500px; }
+.refund-review-table .order-refund-actions { margin: 0; }
+.refund-review-table .order-refund-cell { min-width: 180px; }
+@media (max-width: 1000px) {
+  .refund-review-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .refund-review-filters .order-number-field { grid-column: auto; }
+}
+@media (max-width: 760px) {
+  .refund-review-filters { grid-template-columns: minmax(0, 1fr); }
+}

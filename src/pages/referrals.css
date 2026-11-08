@@ -1,0 +1,38 @@
+.customer-auth {display:grid;gap:14px;padding:8px 0 16px;font-size:16px;line-height:1.7}
+.customer-auth label {font-size:16px;font-weight:600}
+.customer-auth input {width:100%;min-height:46px;font-size:16px}
+.customer-auth p {margin:0}
+.referral-heading {display:flex;align-items:center;justify-content:space-between;gap:24px;margin-bottom:28px}
+.referral-heading h1 {font-size:34px;margin:12px 0}
+.referral-heading p,.referral-intro p {font-size:16px;line-height:1.8;color:var(--muted,#637088)}
+.referral-intro {background:var(--surface,#fff);border:1px solid #e1e8f3;border-radius:18px;padding:26px;margin-bottom:28px}
+.referral-intro strong {font-size:19px;overflow-wrap:anywhere}
+.referral-report {background:var(--surface,#fff);border:1px solid #e1e8f3;border-radius:18px;padding:24px;min-width:0}
+.referral-toolbar { display: flex; align-items: flex-end; gap: 10px; }
+.referral-toolbar > .select-field { width: 194px; }
+.referral-toolbar .referral-refresh {
+  flex-shrink: 0;
+  height: 44px;
+  margin: 0;
+  padding: 0 14px;
+  border-radius: 9px;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--green);
+}
+.referral-toolbar .referral-refresh:hover:not(:disabled) { background: var(--mint); }
+.referral-totals {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;margin:24px 0}
+.referral-totals>div {background:#f3f7ff;border-radius:12px;padding:20px;color:#38465f;display:grid;gap:8px;font-size:16px}
+.referral-totals strong {color:#005bf8;font-size:30px}
+.referral-table-wrap {overflow:auto}
+.referral-table {width:100%;border-collapse:collapse;text-align:left;font-size:16px}
+.referral-table th {background:#f5f7fb;color:#53617a;font-size:15px;font-weight:600;padding:16px;white-space:nowrap;border-bottom:1px solid #e3e9f3}
+.referral-table td {padding:20px 16px;border-bottom:1px solid #edf0f6;line-height:1.6;white-space:nowrap}
+.referral-table small {display:block;color:#748097;font-size:14px;margin-top:5px}
+.referral-amount {font-weight:650;color:#005bf8}
+.referral-status {font-size:14px;display:inline-block;border-radius:7px;background:#f1f4f9;color:#65718a;padding:5px 10px}
+.referral-status.earned {background:#eaf7f0;color:#22724e}
+.referral-status.pending {background:#fff6e7;color:#996113}
+.referral-empty {text-align:center;padding:35px;color:#748097;font-size:16px}
+.referral-pagination {display:flex;align-items:center;justify-content:flex-end;gap:12px;padding-top:22px;font-size:14px}
+@media(max-width:760px){.referral-heading{align-items:flex-start;flex-direction:column}.referral-report{padding:14px}.referral-intro{padding:20px}.referral-pagination{flex-wrap:wrap}.referral-totals{gap:10px}.referral-totals>div{padding:14px}.referral-totals strong{font-size:26px}}

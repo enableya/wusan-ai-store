@@ -5,7 +5,7 @@
 <use href="#knot" transform="translate(52 43) scale(.29)" fill="#505d64"/>
 <text x="118" y="81" fill="#505d64" font-family="Arial,sans-serif" font-size="31">ChatGPT</text>
 <text x="58" y="196" fill="#292d36" font-family="Arial,sans-serif" font-size="82" font-weight="600" letter-spacing="-3">Pro 5×</text>
-<text x="62" y="246" fill="#75817f" font-family="Arial,'PingFang SC',sans-serif" font-size="25">个人订阅 · 1 个月</text>
+<text x="62" y="246" fill="#75817f" font-family="Arial,'PingFang SC',sans-serif" font-size="25">个人订阅 · $100/月档位</text>
 <g transform="translate(-440 270) scale(1.35)"><circle cx="614" cy="172" r="106" fill="none" stroke="#fff" stroke-width="2" opacity=".6"/><g filter="url(#shadow)"><circle cx="614" cy="172" r="70" fill="url(#paper)" stroke="#fff" stroke-width="3"/><use href="#knot" transform="translate(570 128) scale(.49)" fill="#555264"/></g><g fill="url(#paper)" stroke="#fff" stroke-width="2" filter="url(#shadow)"><rect x="478" y="55" width="70" height="70" rx="19" transform="rotate(-12 513 90)"/><rect x="707" y="51" width="66" height="66" rx="19" transform="rotate(12 740 84)"/><rect x="481" y="229" width="65" height="65" rx="19" transform="rotate(8 513 260)"/><rect x="707" y="229" width="67" height="67" rx="19" transform="rotate(-10 740 260)"/></g><g fill="none" stroke="#b4a0d2" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"><path d="M504 79c-12 8-7 21 1 27h16c8-8 12-22-2-28m-12 37h11m-6-48v-5m-22 12-4-4m42 4 4-4"/><path d="m729 79 12 18 15-24m-15 24v8"/><circle cx="510" cy="255" r="12"/><path d="m519 264 12 13m193-15 11 11 20-23"/></g></g>
 <text x="400" y="726" text-anchor="middle" fill="#75817f" font-family="Arial,sans-serif" font-size="17" letter-spacing="3">WUSAN AI · SUBSCRIPTION</text>
 </svg>

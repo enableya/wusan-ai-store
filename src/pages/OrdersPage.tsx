@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useUI } from '../app/UIProvider';
+import { useCustomer } from '../app/CustomerProvider';
 import { Icon } from '../components/Icon';
 import { Notice, PageHeading } from '../components/Page';
 import { SmallProductIcon } from '../components/Product';
+import { CancelOrderButton } from '../components/CancelOrderButton';
 import { useApiResource } from '../hooks/useApiResource';
 import type { Product } from '../types/catalog';
 import { usePageTitle } from '../hooks/usePageTitle';
@@ -16,15 +18,19 @@ import { orderStatus } from '../types/orders';
 export default function OrdersPage() {
   usePageTitle('我的订单');
   const { openModal } = useUI();
+  const { user } = useCustomer();
   const [filter, setFilter] = useState('全部');
   const [query, setQuery] = useState('');
   const selections = useSelections();
   const orders = useApiResource<Order[]>('/orders');
+  const staffCheckout = user?.staffCheckout === true;
+  useEffect(() => { if (staffCheckout) orders.reload(); }, [staffCheckout, orders.reload]);
   useEffect(() => { const reload = () => orders.reload(); window.addEventListener('wusan:orders-updated', reload); return () => window.removeEventListener('wusan:orders-updated', reload); }, [orders.reload]);
   const catalog = useApiResource<Product[]>(selections.length ? '/products' : null);
   const normalized = query.trim().toLowerCase();
   const filtered = selections.filter((selection) => !normalized || selection.productName.toLowerCase().includes(normalized) || selection.id.includes(normalized));
-  const matching = (orders.data || []).filter(order => (filter === '全部' || orderStatus[order.status] === filter)
+  const visibleOrders = (orders.data || []).filter(order => !order.staffCheckout || staffCheckout);
+  const matching = visibleOrders.filter(order => (filter === '全部' || (order.staffCheckout ? '免付开通' : orderStatus[order.status]) === filter)
     && (!normalized || order.productName.toLowerCase().includes(normalized) || order.id.toLowerCase().includes(normalized)));
   const recover = () => openModal({ type: 'recover' });
   return <div className="container page-space orders-page">
@@ -33,15 +39,15 @@ export default function OrdersPage() {
     <Notice subtle>此处展示当前浏览器有权访问的订单。更换浏览器后，可用购买时的联系方式和查询密码找回订单。
       <button type="button" className="text-button" onClick={orders.reload}>刷新订单</button></Notice>
     <div className="orders-toolbar"><div className="underlined-tabs" role="group" aria-label="订单状态">
-      {['全部', '待付款', '已付款', '已关闭'].map((value) => <button key={value} type="button" data-order-filter={value}
+      {['全部', '待付款', '已付款', '已关闭', '订单已取消', ...(staffCheckout ? ['免付开通'] : [])].map((value) => <button key={value} type="button" data-order-filter={value}
         aria-pressed={filter === value} className={filter === value ? 'active' : ''} onClick={() => setFilter(value)}>
-        {value}{value === '全部' && <span className="count-label">{orders.data?.length || 0}</span>}
+        {value}{value === '全部' && <span className="count-label">{visibleOrders.length}</span>}
       </button>)}
     </div><div className="search-field"><Icon name="search" /><input id="order-search" type="search" placeholder="搜索订单号或商品名称" aria-label="搜索订单号或商品名称" maxLength={100} value={query} onChange={(event) => setQuery(event.target.value)} /></div></div>
     <div id="order-results" aria-live="polite">{!orders.data ? <ApiState compact error={orders.error} retry={orders.reload} title="正在读取订单" /> : matching.length > 0 ? <div className="draft-list">{matching.map(order => <div className="draft-row server-order-row" key={order.id}>
-      <div className="draft-info"><strong>{order.productName}</strong><span className="mono">{order.id}</span><span>{formatDate(order.createdAt)}{order.environment === 'sandbox' ? ' · 沙箱测试' : ''}</span></div>
-      <span className="draft-price">¥{money(order.priceCents)}</span><span className="status-badge pending">{orderStatus[order.status]}</span>
-      <Link className="text-button" to={`/orders/${order.id}`}>{order.status === 'pending' ? '查看 / 付款' : '查看订单'} <Icon name="arrow-right" /></Link>
+      <div className="draft-info"><strong>{order.productName}</strong><span className="mono">{order.id}</span><span>{formatDate(order.createdAt)}{order.environment === 'sandbox' ? ' · 沙箱测试' : ''}</span>{order.cancellation && <span className="order-cancellation-note">{order.cancellation.message}</span>}</div>
+      <span className="draft-price">¥{money(order.priceCents)}</span><span className="status-badge pending">{order.staffCheckout ? '免付开通' : orderStatus[order.status]}</span>
+      <div className="server-order-actions"><CancelOrderButton order={order} onChanged={orders.reload} /><Link className="text-button" to={`/orders/${order.id}`}>{order.status === 'pending' ? '查看 / 付款' : '查看订单'} <Icon name="arrow-right" /></Link></div>
     </div>)}</div> : <div className="empty-state">
       <div className="empty-icon"><Icon name={normalized ? 'search-x' : 'receipt-text'} /></div>
       <h2>{normalized ? '没有匹配的订单' : filter === '全部' ? '还没有订单' : `暂无${filter}订单`}</h2>

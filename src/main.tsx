@@ -4,15 +4,18 @@ import { BrowserRouter } from 'react-router-dom';
 import App from './app/App';
 import { ThemeProvider } from './app/ThemeProvider';
 import { UIProvider } from './app/UIProvider';
+import { MessageProvider } from './app/MessageProvider';
 import './styles.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
       <ThemeProvider>
-        <UIProvider>
-          <App />
-        </UIProvider>
+        <MessageProvider>
+          <UIProvider>
+            <App />
+          </UIProvider>
+        </MessageProvider>
       </ThemeProvider>
     </BrowserRouter>
   </StrictMode>,

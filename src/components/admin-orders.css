@@ -1,0 +1,39 @@
+.order-filters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px 12px; padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); margin-bottom: 16px; align-items: end; }
+.order-number-field { display: grid; gap: 6px; }
+.order-filters label { margin: 0; color: var(--muted); font-size: 13px; font-weight: 600; line-height: 20px; }
+.order-number-field input { width: 100%; min-width: 0; height: 44px; padding: 0 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: var(--text); font-size: 13px; }
+.order-filters .date-field, .order-filters .select-field { min-width: 0; width: auto; }
+.order-filter-actions { grid-column: span 1; display: flex; gap: 10px; }
+.order-filter-actions .button { height: 44px; min-height: 44px; }
+.order-presets { grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.order-presets > span, .order-update { color: var(--muted); font-size: 12px; }
+.order-update { text-align: right; margin: 18px 0; }
+.order-error { display: flex; gap: 12px; align-items: center; margin: 16px 0; color: var(--danger); }
+.order-metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; margin-bottom: 24px; }
+.order-list { min-width: 0; }
+.order-list .shared-admin-table-frame { border-radius: 0; border-inline: 0; }
+.order-table { min-width: 1600px; }
+.order-table td { white-space: nowrap; }
+.order-table td small { display: block; color: var(--muted); font-size: 11px; margin-top: 5px; }
+.order-table .order-id { font-family: monospace; font-size: 12px; }
+.order-status { display: inline-block; padding: 5px 9px; border-radius: 6px; font-size: 12px; background: var(--soft); color: var(--muted); }
+.order-status.paid { background: var(--mint); color: var(--mint-text); }
+.order-status.pending { background: var(--soft); color: var(--text); }
+.order-pagination { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px; padding: 18px; color: var(--muted); font-size: 12px; }
+.order-pagination .button { min-height: 36px; padding: 8px 12px; }
+@media (max-width: 1000px) { .order-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } .order-number-field, .order-filter-actions { grid-column: 1 / -1; } .order-filter-actions .button { flex: 1; } }
+@media (max-width: 760px) { .order-filters { padding: 14px; } .order-number-field { grid-column: 1 / -1; } .order-filter-actions .button { flex: 1; } .order-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; } .order-presets .admin-presets { flex-basis: 100%; } }
+
+.order-table .order-voucher-cell, .order-table .order-email-cell { min-width: 160px; max-width: 250px; white-space: normal; overflow-wrap: anywhere; }
+.order-voucher-cell code { display: block; font-size: 12px; line-height: 1.6; }
+.order-voucher-cell .text-button { display: block; margin-top: 6px; font-size: 12px; }
+.order-table .order-refund-cell { min-width: 200px; max-width: 300px; white-space: normal; overflow-wrap: anywhere; }
+.order-refund-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; }
+.order-refund-form { display: grid; gap: 16px; }
+.order-refund-form dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px 16px; margin: 0; }
+.order-refund-form dt { color: var(--muted); }
+.order-refund-form dd { margin: 0; overflow-wrap: anywhere; }
+.order-refund-form label { display: grid; gap: 8px; }
+.order-refund-form textarea { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); background: var(--surface); }
+.order-refund-form .order-refund-check { display: flex; align-items: flex-start; gap: 10px; }
+.order-refund-check input { flex: none; width: 18px; height: 18px; }

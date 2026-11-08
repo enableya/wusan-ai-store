@@ -10,9 +10,20 @@ wusan-ai.store {
     handle @private {
         respond 403
     }
+    @redemptionPreview {
+        method POST
+        path_regexp "^/api/orders/WS[0-9a-f]{20,60}/redemption/preview$"
+    }
     handle /api/* {
-        request_body {
-            max_size 32KB
+        handle @redemptionPreview {
+            request_body {
+                max_size 1024000
+            }
+        }
+        handle {
+            request_body {
+                max_size 32KB
+            }
         }
         reverse_proxy 127.0.0.1:5182
     }

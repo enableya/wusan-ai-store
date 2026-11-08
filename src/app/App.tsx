@@ -1,8 +1,10 @@
 import { lazy, Suspense } from 'react';
 import { Route, Routes } from 'react-router-dom';
 import { ErrorBoundary } from '../components/ErrorBoundary';
+import { CustomerProvider } from './CustomerProvider';
 import SiteLayout from '../layouts/SiteLayout';
 
+const ReferralsPage = lazy(() => import('../pages/ReferralsPage'));
 const HomePage = lazy(() => import('../pages/HomePage'));
 const ProductPage = lazy(() => import('../pages/ProductPage'));
 const CheckoutPage = lazy(() => import('../pages/CheckoutPage'));
@@ -18,10 +20,11 @@ const AdminPage = lazy(() => import('../pages/AdminPage'));
 
 export default function App() {
   return <ErrorBoundary><Suspense fallback={<div className="container page-space loading-page" role="status">正在加载…</div>}>
-    <Routes><Route path="admin" element={<AdminPage />} /><Route element={<SiteLayout />}>
+    <Routes><Route path="admin" element={<AdminPage />} /><Route element={<CustomerProvider><SiteLayout /></CustomerProvider>}>
       <Route index element={<HomePage />} />
       <Route path="products/:productId" element={<ProductPage />} />
       <Route path="checkout/:productId" element={<CheckoutPage />} />
+      <Route path="referrals" element={<ReferralsPage />} />
       <Route path="orders" element={<OrdersPage />} />
       <Route path="orders/:orderRef" element={<OrderDetailPage />} />
       <Route path="help" element={<HelpPage />} />

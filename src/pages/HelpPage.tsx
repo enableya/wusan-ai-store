@@ -1,7 +1,8 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { FaqList } from '../components/FaqList';
 import { Icon } from '../components/Icon';
+import { SupportButton } from '../components/SupportButton';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { useApiResource } from '../hooks/useApiResource';
 import { ApiState } from '../components/ApiState';
@@ -12,6 +13,16 @@ export default function HelpPage() {
   const [category, setCategory] = useState('全部');
   const [query, setQuery] = useState('');
   const resource = useApiResource<{ articles: Article[]; faqs: Faq[] }>('/content');
+  const { hash, key } = useLocation();
+  const faqHeading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (hash !== '#faq' || !resource.data) return;
+    const frame = requestAnimationFrame(() => {
+      faqHeading.current?.scrollIntoView();
+      faqHeading.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [hash, key, resource.data]);
   if (!resource.data) return <ApiState error={resource.error} retry={resource.reload} title="正在加载帮助中心" />;
   const { articles, faqs } = resource.data;
   const normalized = query.trim().toLowerCase();
@@ -35,6 +46,6 @@ export default function HelpPage() {
     </div> : <div className="empty-state compact"><div className="empty-icon"><Icon name="search-x" /></div><h2>没有找到相关内容</h2><p>换一个关键词，或查看全部分类。</p>
       <button className="button secondary" type="button" onClick={() => { setCategory('全部'); setQuery(''); }}>查看全部文章</button>
     </div>}</div>
-    <div className="help-faq"><div className="section-heading"><h2>常见问题</h2><Link className="text-button" to="/support">仍有疑问？联系支持 <Icon name="arrow-right" /></Link></div><FaqList faqs={faqs} /></div>
+    <div className="help-faq"><div className="section-heading"><h2 id="faq" ref={faqHeading} tabIndex={-1}>常见问题</h2><SupportButton className="text-button">仍有疑问？联系支持 <Icon name="arrow-right" /></SupportButton></div><FaqList faqs={faqs} /></div>
   </div>;
 }

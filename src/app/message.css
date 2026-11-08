@@ -1,0 +1,47 @@
+.message-position {
+  position: fixed;
+  z-index: 1000;
+  top: calc(env(safe-area-inset-top, 0px) + 20px);
+  inset-inline: 16px;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.app-message {
+  --message-accent: #2563eb;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  max-width: min(100%, 480px);
+  padding: 12px 16px;
+  border: 1px solid #e3e8ef;
+  border-radius: 10px;
+  background: #fff;
+  color: #1f2937;
+  box-shadow: 0 6px 24px rgb(15 23 42 / 12%), 0 1px 3px rgb(15 23 42 / 7%);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  animation: message-slide-in 200ms ease-out both;
+}
+.app-message--success {
+  --message-accent: #67c23a;
+  color: var(--message-accent);
+}
+.app-message--error { --message-accent: #dc2626; }
+.app-message--warning { --message-accent: #b45309; }
+.app-message > svg {
+  flex: none;
+  width: 19px;
+  height: 19px;
+  margin-top: 2px;
+  color: var(--message-accent);
+}
+@keyframes message-slide-in {
+  from { transform: translateY(-14px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-message { animation: none; }
+}

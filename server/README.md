@@ -39,9 +39,9 @@ Cookie: 当前浏览器访问凭证
 ```json
 {
   "productId": "chatgpt-plus",
-  "email": "buyer@example.com",
-  "expectedPriceCents": 13000,
-  "acceptedTerms": true
+  "contact": "buyer@example.com",
+  "queryPassword": "example-query-password",
+  "expectedPriceCents": 13000
 }
 ```
 

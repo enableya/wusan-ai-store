@@ -1,11 +1,13 @@
+import { cancellationView } from './order-timeout-state.ts';
 import { randomBytes, createHash } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Order } from '../src/types/orders.ts';
 import { catalogRepository } from './database.ts';
+import { couponRepository } from './coupons.ts';
 import type { PaymentGateway, TradeResult } from './alipay.ts';
 import { hashPassword, verifyPassword, dummyPasswordHash } from './passwords.ts';
-import { normalizeContact, validContact, validQueryPassword } from '../src/lib/order-input.ts';
+import { normalizeContact, validContact, validNewQueryPassword, validQueryPassword } from '../src/lib/order-input.ts';
 
 export class OrderError extends Error {
   status: number;
@@ -40,27 +42,58 @@ function view(row: Record<string, unknown>): Order {
     status: row.status as Order['status'], createdAt: row.created_at as string,
     expiresAt: row.expires_at as string, paidAt: row.paid_at as string | null,
     tradeNo: row.trade_no as string | null, environment: row.environment as Order['environment'],
+    ...(snapshot.staffCheckout === true ? { staffCheckout: true as const } : {}),
   };
 }
 
 export function orderRepository(db: DatabaseSync, gateway: PaymentGateway) {
   const catalog = catalogRepository(db);
+  const { environment } = gateway.status;
+  const coupons = couponRepository(db, environment);
+  const toView = (row: Record<string, unknown>): Order => {
+    const order = view(row);
+    const cancellation = cancellationView(db, order.id);
+    const context = JSON.parse(String(row.snapshot)).payment;
+    let cancelAction: Order['cancelAction'] = null;
+    if (!cancellation && !order.staffCheckout && gateway.status.enabled && order.environment === environment
+      && context?.appId === gateway.appId && context?.sellerId === gateway.sellerId) {
+      if (order.status === 'pending') cancelAction = 'cancel';
+      if (order.status === 'paid') {
+        const blocked = db.prepare(`SELECT 1 FROM order_redemptions WHERE order_id=? AND
+          (submitted=1 OR preview_until>? OR json_extract(result,'$.state')='FULFILLED' OR json_extract(result,'$.settlement')='PAID'
+           OR json_extract(result,'$.renewal') IN ('paid','ready'))
+          UNION ALL SELECT 1 FROM order_cancellations WHERE order_id=? AND source!='customer_unpaid'
+          UNION ALL SELECT 1 FROM payment_refunds WHERE order_id=?`).get(order.id,Date.now(),order.id,order.id);
+        if (!blocked) cancelAction = 'request_refund';
+      }
+    }
+    return cancellation ? { ...order, cancelAction, cancellation, ...(cancellation.cancelledAt || cancellation.state === 'cancelled' ? { status: 'cancelled' as const } : {}) } : { ...order, cancelAction };
+  };
   const raw = (id: string) => db.prepare('SELECT * FROM orders WHERE id = ?').get(id);
-  function owned(id: string, owner: string | null) {
-    const row = owner ? db.prepare(`SELECT * FROM orders WHERE id = ? AND (owner_hash = ? OR id IN
-      (SELECT order_id FROM order_access WHERE owner_hash = ? AND expires_at > ?))`).get(id, owner, owner, new Date().toISOString()) : undefined;
+  function owned(id: string, owner: string | null, staffOwner: string | null = null) {
+    const row = owner || staffOwner ? db.prepare(`SELECT * FROM orders WHERE id = ? AND environment = ? AND (owner_hash IN (?, ?) OR id IN
+      (SELECT order_id FROM order_access WHERE owner_hash = ? AND expires_at > ?))`).get(id, environment, owner, staffOwner, owner, new Date().toISOString()) : undefined;
     if (!row) throw new OrderError(404, 'ORDER_NOT_FOUND', '订单不存在或当前浏览器无权访问。');
-    return view(row);
+    return toView(row);
   }
   function ready() {
     if (!gateway.status.enabled) throw new OrderError(503, 'PAYMENT_NOT_CONFIGURED', gateway.status.message);
   }
   function sameEnvironment(order: Order) {
-    if (order.environment !== gateway.status.environment) throw new OrderError(409, 'PAYMENT_ENVIRONMENT_CHANGED', '该订单属于另一个支付环境，请重新下单。');
+    if (order.staffCheckout) throw new OrderError(409, 'ORDER_PAYMENT_EXEMPT', '免付开通订单无需付款。');
+    if (order.environment !== environment) throw new OrderError(409, 'PAYMENT_ENVIRONMENT_CHANGED', '该订单属于另一个支付环境，请重新下单。');
     const context = JSON.parse(raw(order.id)!.snapshot as string).payment;
     if (context?.appId !== gateway.appId || context?.sellerId !== gateway.sellerId) {
       throw new OrderError(409, 'PAYMENT_MERCHANT_CHANGED', '该订单的收款配置已变更，请联系经营方核实原交易。');
     }
+  }
+  function payable(id: string, owner: string | null) {
+    ready();
+    const order = owned(id, owner);
+    sameEnvironment(order);
+    if (order.status !== 'pending') throw new OrderError(409, 'ORDER_NOT_PENDING', '订单已付款或已关闭，请查看订单状态。');
+    if (Date.parse(order.expiresAt) <= Date.now()) throw new OrderError(409, 'ORDER_EXPIRED', '付款时间已结束，请先查询支付结果；确认未付款后可重新下单。');
+    return order;
   }
   function apply(order: Order, trade: TradeResult, notification: boolean) {
     if (trade.out_trade_no !== order.id || (notification && trade.app_id !== gateway.appId)
@@ -76,22 +109,32 @@ export function orderRepository(db: DatabaseSync, gateway: PaymentGateway) {
       if (order.tradeNo && order.tradeNo !== trade.trade_no) throw new OrderError(400, 'TRADE_MISMATCH', '交易号不一致。');
       db.prepare(`UPDATE orders SET status = 'paid', trade_no = ?, paid_at = COALESCE(paid_at, ?)
         WHERE id = ?`).run(trade.trade_no, new Date().toISOString(), order.id);
+      // A verified late payment always wins over a prior unpaid cancellation.
+      db.prepare(`UPDATE order_cancellations SET state='fulfilled',note='已核实到账，保留已付款订单。',updated_at=?
+        WHERE order_id=? AND source='customer_unpaid'`).run(new Date().toISOString(),order.id);
     } else if (trade.trade_status === 'TRADE_CLOSED') {
       db.prepare("UPDATE orders SET status = 'closed' WHERE id = ? AND status = 'pending'").run(order.id);
     } // Pending, unknown and non-payment events never imply payment success.
   }
   return {
-    list(owner: string | null) {
-      return owner ? db.prepare(`SELECT * FROM orders WHERE owner_hash = ? OR id IN
-        (SELECT order_id FROM order_access WHERE owner_hash = ? AND expires_at > ?)
-        ORDER BY created_at DESC LIMIT 200`).all(owner, owner, new Date().toISOString()).map(view) : [];
+    list(owner: string | null, staffOwner: string | null = null) {
+      return owner || staffOwner ? db.prepare(`SELECT * FROM orders WHERE environment = ? AND (owner_hash IN (?, ?) OR id IN
+        (SELECT order_id FROM order_access WHERE owner_hash = ? AND expires_at > ?))
+        ORDER BY created_at DESC LIMIT 200`).all(environment, owner, staffOwner, owner, new Date().toISOString()).map(toView) : [];
     },
     owned,
+    cancellationEligible(id: string, owner: string | null) {
+      ready();
+      const order = owned(id,owner);
+      sameEnvironment(order);
+      if (!order.cancelAction) throw new OrderError(409,'ORDER_CANNOT_CANCEL','订单状态已变更，已提交充值、正在处理或已取消的订单不能再次取消，请刷新查看。');
+      return order;
+    },
     async lookup(owner: string, input: Record<string, unknown>) {
       if (typeof input.contact !== 'string' || !validContact(input.contact) || typeof input.queryPassword !== 'string' || !validQueryPassword(input.queryPassword)) {
-        throw new OrderError(400, 'INVALID_LOOKUP', '请填写联系方式和 8–64 位查询密码。');
+        throw new OrderError(400, 'INVALID_LOOKUP', '请填写联系方式和 6–64 位查询密码。');
       }
-      const rows = db.prepare('SELECT * FROM orders WHERE contact = ? AND query_password_hash IS NOT NULL ORDER BY created_at DESC LIMIT 50').all(normalizeContact(input.contact));
+      const rows = db.prepare('SELECT * FROM orders WHERE contact = ? AND environment = ? AND query_password_hash IS NOT NULL ORDER BY created_at DESC LIMIT 50').all(normalizeContact(input.contact), environment);
       const found: Record<string, unknown>[] = [];
       if (!rows.length) await verifyPassword(input.queryPassword, dummyPasswordHash);
       for (const row of rows) if (await verifyPassword(input.queryPassword, String(row.query_password_hash))) found.push(row);
@@ -105,21 +148,24 @@ export function orderRepository(db: DatabaseSync, gateway: PaymentGateway) {
           ON CONFLICT(order_id, owner_hash) DO UPDATE SET expires_at = excluded.expires_at`).run(String(row.id), owner, expires);
         db.exec('COMMIT');
       } catch (error) { db.exec('ROLLBACK'); throw error; }
-      return found.map(view);
+      return found.map(toView);
     },
-    async create(owner: string, input: Record<string, unknown>, key: string) {
+    async create(owner: string, input: Record<string, unknown>, key: string, referral?: { inviterId: string; buyerId: string | null }) {
       ready();
       if (!/^[a-f0-9-]{16,80}$/i.test(key)) throw new OrderError(400, 'INVALID_IDEMPOTENCY_KEY', '请刷新页面后重新提交。');
       if (typeof input.productId !== 'string' || typeof input.contact !== 'string' || !validContact(input.contact)
-        || typeof input.queryPassword !== 'string' || !validQueryPassword(input.queryPassword) || input.acceptedTerms !== true) {
-        throw new OrderError(400, 'INVALID_ORDER', '请填写联系方式、8–64 位查询密码，并确认服务须知与隐私说明。');
+        || typeof input.queryPassword !== 'string' || !validQueryPassword(input.queryPassword)) {
+        throw new OrderError(400, 'INVALID_ORDER', '请填写有效的联系方式和查询密码。');
       }
       const contact = normalizeContact(input.contact);
-      const fingerprint = hash(JSON.stringify([input.productId, contact, input.expectedPriceCents]));
+      const fingerprint = hash(JSON.stringify([input.productId, contact, input.expectedPriceCents, typeof input.couponCode === 'string' ? input.couponCode.trim().toUpperCase() : '']));
       const existing = db.prepare('SELECT * FROM orders WHERE owner_hash = ? AND idempotency_key = ?').get(owner, key);
       if (existing) {
-        if (existing.fingerprint !== fingerprint || !await verifyPassword(input.queryPassword, String(existing.query_password_hash || ''))) throw new OrderError(409, 'IDEMPOTENCY_CONFLICT', '该提交编号已用于其他订单，请刷新后重试。');
-        return view(existing);
+        if (existing.environment !== environment || existing.fingerprint !== fingerprint || !await verifyPassword(input.queryPassword, String(existing.query_password_hash || ''))) throw new OrderError(409, 'IDEMPOTENCY_CONFLICT', '该提交编号已用于其他订单，请刷新后重试。');
+        return toView(existing);
+      }
+      if (!validNewQueryPassword(input.queryPassword)) {
+        throw new OrderError(400, 'INVALID_ORDER', '请设置 6–14 位查询密码。');
       }
       const product = catalog.findProduct(input.productId);
       if (!product?.selectable || !product.priceCents || product.priceCents > 10000000000) {
@@ -130,35 +176,73 @@ export function orderRepository(db: DatabaseSync, gateway: PaymentGateway) {
       // Recheck after the asynchronous hash so concurrent retries cannot create duplicate orders.
       const repeated = db.prepare('SELECT * FROM orders WHERE owner_hash = ? AND idempotency_key = ?').get(owner, key);
       if (repeated) {
-        if (repeated.fingerprint !== fingerprint || !await verifyPassword(input.queryPassword, String(repeated.query_password_hash || ''))) throw new OrderError(409, 'IDEMPOTENCY_CONFLICT', '该提交编号已用于其他订单，请刷新后重试。');
-        return view(repeated);
+        if (repeated.environment !== environment || repeated.fingerprint !== fingerprint || !await verifyPassword(input.queryPassword, String(repeated.query_password_hash || ''))) throw new OrderError(409, 'IDEMPOTENCY_CONFLICT', '该提交编号已用于其他订单，请刷新后重试。');
+        return toView(repeated);
       }
       const current = catalog.findProduct(input.productId);
       if (!current?.selectable || current.priceCents !== product.priceCents) throw new OrderError(409, 'PRICE_CHANGED', '商品或价格已更新，请刷新后重试。');
       const id = `WS${Date.now()}${randomBytes(8).toString('hex')}`;
       const createdAt = new Date().toISOString();
       const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
-      const snapshot = { productId: product.id, productName: product.name, priceCents: product.priceCents,
+      db.exec('BEGIN IMMEDIATE');
+      try {
+      const coupon = input.couponCode ? coupons.quote(input.couponCode, product.id) : null;
+      if (coupon && input.expectedDiscountCents !== coupon.discountCents) throw new OrderError(409, 'COUPON_CHANGED', '优惠券内容已变更，请重新验证后确认金额。');
+      const snapshot = { productId: product.id, productName: product.name, category: product.category, priceCents: coupon?.payableCents ?? product.priceCents,
+        originalPriceCents: product.priceCents, couponCode: coupon?.code, discountCents: coupon?.discountCents ?? 0,
         periodMonths: product.periodMonths, details: product.details, payment: { appId: gateway.appId, sellerId: gateway.sellerId } };
       db.prepare(`INSERT INTO orders (id, owner_hash, email, snapshot, status, created_at, expires_at,
         idempotency_key, fingerprint, environment, contact, query_password_hash, terms_version) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, '2026-10-21')`).run(
-        id, owner, /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.contact.trim()) ? input.contact.trim() : '', JSON.stringify(snapshot), createdAt, expiresAt, key, fingerprint, gateway.status.environment, contact, passwordHash);
+        id, owner, /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.contact.trim()) ? input.contact.trim() : '', JSON.stringify(snapshot), createdAt, expiresAt, key, fingerprint, environment, contact, passwordHash);
+      if (coupon) db.prepare('INSERT INTO coupon_orders(coupon_id,order_id,discount_cents) VALUES (?,?,?)').run(coupon.id,id,coupon.discountCents);
+      if (referral) db.prepare('INSERT INTO referral_orders(order_id, inviter_id, buyer_id, created_at) VALUES (?, ?, ?, ?)')
+        .run(id, referral.inviterId, referral.buyerId, createdAt);
+      db.exec('COMMIT');
+      } catch (error) { db.exec('ROLLBACK'); throw error; }
       return owned(id, owner);
     },
+    createStaff(staffOwner: string, productId: unknown, key: string) {
+      if (!/^[a-f0-9-]{16,80}$/i.test(key)) throw new OrderError(400, 'INVALID_IDEMPOTENCY_KEY', '请刷新页面后重新提交。');
+      const fingerprint = hash(JSON.stringify(['staff-checkout', productId]));
+      const find = () => db.prepare('SELECT * FROM orders WHERE owner_hash = ? AND idempotency_key = ?').get(staffOwner, key);
+      const resolve = (row: NonNullable<ReturnType<typeof find>>) => {
+        if (row.environment !== environment || row.fingerprint !== fingerprint) throw new OrderError(409, 'IDEMPOTENCY_CONFLICT', '该提交编号已用于其他订单，请刷新后重试。');
+        return toView(row);
+      };
+      const existing = find();
+      if (existing) return resolve(existing);
+      const product = typeof productId === 'string' ? catalog.findProduct(productId) : null;
+      if (!product?.selectable || !product.priceCents) throw new OrderError(409, 'PRODUCT_UNAVAILABLE', '套餐已下架或暂不可购买。');
+      const id = `WS${Date.now()}${randomBytes(8).toString('hex')}`;
+      const now = new Date().toISOString();
+      const snapshot = {
+        productId: product.id, productName: product.name, category: product.category, priceCents: 0, originalPriceCents: product.priceCents,
+        periodMonths: product.periodMonths, details: product.details, staffCheckout: true,
+      };
+      // Use the existing redemption-ready state without recording a payment or a referral.
+      db.prepare(`INSERT INTO orders (id, owner_hash, email, snapshot, status, created_at, expires_at,
+        idempotency_key, fingerprint, environment) VALUES (?, ?, '', ?, 'paid', ?, ?, ?, ?, ?)
+        ON CONFLICT(owner_hash, idempotency_key) DO NOTHING`)
+        .run(id, staffOwner, JSON.stringify(snapshot), now, now, key, fingerprint, environment);
+      return resolve(find()!);
+    },
     payment(id: string, owner: string | null) {
-      ready();
-      const order = owned(id, owner);
-      sameEnvironment(order);
-      if (order.status !== 'pending') throw new OrderError(409, 'ORDER_NOT_PENDING', '订单已付款或已关闭，请查看订单状态。');
-      if (Date.parse(order.expiresAt) <= Date.now()) throw new OrderError(409, 'ORDER_EXPIRED', '付款时间已结束，请先查询支付结果；确认未付款后可重新下单。');
-      return { paymentHtml: gateway.paymentForm(order) };
+      return { paymentHtml: gateway.paymentForm(payable(id, owner)) };
+    },
+    paymentQr(id: string, owner: string | null) {
+      const order = payable(id, owner);
+      try {
+        return { paymentUrl: gateway.paymentForm(order, true) };
+      } catch {
+        throw new OrderError(502, 'PAYMENT_QR_FAILED', '暂时无法生成支付宝二维码，可以重试或前往支付宝收银台。');
+      }
     },
     notify(params: Record<string, string>) {
       ready();
       if (!gateway.verifyNotification(params)) throw new OrderError(400, 'INVALID_SIGNATURE', '支付通知验签失败。');
       const row = raw(params.out_trade_no || '');
       if (!row) throw new OrderError(404, 'ORDER_NOT_FOUND', '订单不存在。');
-      const order = view(row);
+      const order = toView(row);
       sameEnvironment(order);
       if (!params.notify_id || !params.trade_no) throw new OrderError(400, 'INVALID_NOTIFICATION', '通知标识缺失。');
       const eventType = params.out_biz_no || params.gmt_refund || params.refund_fee ? 'non-payment' : 'payment';
@@ -173,21 +257,33 @@ export function orderRepository(db: DatabaseSync, gateway: PaymentGateway) {
         db.exec('COMMIT');
       } catch (error) { db.exec('ROLLBACK'); throw error; }
     },
-    async close(id: string, owner: string | null) {
+    async close(id: string, owner: string | null, customerCancellation = false) {
       ready();
       const order = owned(id, owner);
       sameEnvironment(order);
+      if (customerCancellation && order.cancellation) return order;
       if (order.status !== 'pending') throw new OrderError(409, 'ORDER_NOT_PENDING', '只可关闭未付款订单。');
       const trade = await gateway.query(order);
       if (trade) apply(order, trade, false);
       const current = owned(id, owner);
-      if (current.status !== 'pending') return current;
-      if (trade && trade.trade_status !== 'WAIT_BUYER_PAY') throw new OrderError(409, 'TRADE_UNCERTAIN', '支付状态未知，请稍后查询。');
-      if (trade) {
+      if (current.status !== 'pending' && !(customerCancellation && current.status === 'closed')) return current;
+      if (current.status === 'pending' && trade && trade.trade_status !== 'WAIT_BUYER_PAY') throw new OrderError(409, 'TRADE_UNCERTAIN', '支付状态未知，请稍后查询。');
+      if (current.status === 'pending' && trade) {
         const result = await gateway.close(order);
         if (result.out_trade_no !== order.id) throw new OrderError(400, 'TRADE_MISMATCH', '关单结果不一致。');
       }
-      db.prepare("UPDATE orders SET status = 'closed' WHERE id = ? AND status = 'pending'").run(id);
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        const changed=db.prepare("UPDATE orders SET status = 'closed' WHERE id = ? AND (status = 'pending' OR (?=1 AND status='closed'))").run(id,Number(customerCancellation));
+        if(customerCancellation && changed.changes) {
+          const now=new Date().toISOString();
+          db.prepare(`INSERT INTO order_cancellations(order_id,state,refund_key,note,created_at,updated_at,cancelled_at,source)
+            VALUES (?,'cancelled',?,'未付款订单已取消，无需退款。',?,?,?,'customer_unpaid')
+            ON CONFLICT(order_id) DO UPDATE SET state='cancelled',source='customer_unpaid',note=excluded.note,cancelled_at=excluded.cancelled_at,updated_at=excluded.updated_at`)
+            .run(id,'unpaid-'+hash(id).slice(0,40),now,now,now);
+        }
+        db.exec('COMMIT');
+      }catch(error){db.exec('ROLLBACK');throw error;}
       return owned(id, owner);
     },
     async refresh(id: string, owner: string | null) {
