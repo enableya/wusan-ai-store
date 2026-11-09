@@ -9,10 +9,14 @@ export type Order = {
   productId: string;
   productName: string;
   priceCents: number;
+  originalPriceCents?: number;
   staffCheckout?: true;
   periodMonths: number;
   status: 'pending' | 'paid' | 'closed' | 'cancelled';
+  fulfillment?: { status: 'succeeded'; rechargeEmail: string | null };
+  recharge?: { submitted: boolean; state: string; settlement: string; renewal: string };
   cancelAction?: 'cancel' | 'request_refund' | null;
+  cancelUnavailableReason?: string;
   cancellation?: { state: 'checking' | 'review' | 'refund_review' | 'refund_rejected' | 'refund_pending' | 'cancelled'; message: string; cancelledAt: string | null };
   createdAt: string;
   expiresAt: string;

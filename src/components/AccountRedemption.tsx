@@ -4,27 +4,9 @@ import type { FormEvent } from 'react';
 import { Icon } from './Icon';
 import { useApiResource } from '../hooks/useApiResource';
 import { ApiError, postApi } from '../services/api';
+import { resultTag } from '../lib/redemption-status';
 import type { RedemptionPolicy, RedemptionResult, RedemptionView } from '../types/redemption';
 
-type ResultTag = { label: string; tone: 'progress' | 'success' | 'attention' | 'failure' };
-
-const resultTags: Record<string, ResultTag> = {
-  SESSION_REQUIRED: { label: '等待账号信息', tone: 'attention' },
-  QUEUED: { label: '已受理，排队中', tone: 'progress' },
-  FULFILLING: { label: '处理中', tone: 'progress' },
-  RECONCILE_ONLY: { label: '正在核对充值结果', tone: 'progress' },
-  MANUAL_REVIEW: { label: '待人工确认', tone: 'attention' },
-  FULFILLED: { label: '办理完成，等待结算确认', tone: 'progress' },
-  CANCELED: { label: '办理已取消，结算状态待确认', tone: 'attention' },
-};
-
-function resultTag(result: RedemptionResult | null): ResultTag {
-  if (result?.settlement === 'PAID' || result?.renewal === 'paid') return { label: '充值成功', tone: 'success' };
-  if (result?.settlement === 'NO_CHARGE' || result?.state === 'NO_CHARGE') return { label: '充值未完成，本次未扣款', tone: 'failure' };
-  if (result?.renewal === 'ready') return { label: '续费已设置，等待下个周期扣款', tone: 'progress' };
-  if (result?.renewal === 'attention') return { label: '续费设置需要处理，请联系客服', tone: 'attention' };
-  return resultTags[result?.state ?? ''] ?? { label: '正在等待兑换结果', tone: 'progress' };
-}
 
 function RedemptionSteps({ result }: { result: RedemptionResult | null }) {
   const success = result?.settlement === 'PAID' || result?.renewal === 'paid';
@@ -51,13 +33,16 @@ function RedemptionLoading({ label, result }: { label: string; result?: Redempti
   </div>;
 }
 
-export function AccountRedemption({ orderId, productName, onResult }: { orderId: string; productName: string; onResult?: () => void }) {
+export function AccountRedemption({ orderId, productName, onResult, onBusyChange }: {
+  orderId: string; productName: string; onResult?: () => void; onBusyChange?: (busy: boolean) => void;
+}) {
   const path = '/orders/' + encodeURIComponent(orderId) + '/redemption';
   const resource = useApiResource<RedemptionView>(path);
   const [updated, setUpdated] = useState<RedemptionView | null>(null);
   const [editing, setEditing] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [validationCode, setValidationCode] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
   const [action, setAction] = useState<string>('');
   const [progressPaused, setProgressPaused] = useState(false);
@@ -71,6 +56,13 @@ export function AccountRedemption({ orderId, productName, onResult }: { orderId:
   const result = view?.result ?? null;
   const tag = resultTag(result);
   const submitted = view?.submitted;
+  const sessionExpired = validationCode === 'SESSION_EXPIRED'
+    || ((!validationCode || validationCode === 'INVALID_SESSION') && /过期|失效/.test(validationError || ''));
+  const validationTitle = validationCode === 'SESSION_EXPIRED' ? 'Session 已过期' : sessionExpired ? 'Session 已失效'
+    : ['REDEMPTION_EXPIRED', 'REDEMPTION_NOT_FOUND', 'PORTAL_PRECHECK_EXPIRED'].includes(validationCode || '') ? '账号确认已过期'
+    : ['REDEMPTION_TIMEOUT', 'REDEMPTION_CONNECTION_FAILED', 'REDEMPTION_UNAVAILABLE', 'REDEMPTION_INVALID_RESPONSE', 'REDEMPTION_RATE_LIMITED'].includes(validationCode || '') ? '暂时无法验证账号'
+    : ['SESSION_INVALID_JSON', 'SESSION_MISSING_TOKEN', 'SESSION_INVALID_ACCOUNT', 'SESSION_INVALID_EXPIRY', 'SESSION_TOO_LARGE'].includes(validationCode || '') ? '登录信息不完整或格式有误'
+    : '账号验证未通过';
   const settled = result?.settlement === 'PAID' || result?.settlement === 'NO_CHARGE'
     || result?.state === 'NO_CHARGE' || result?.renewal === 'paid'
     || result?.renewal === 'ready' || result?.renewal === 'attention';
@@ -78,6 +70,11 @@ export function AccountRedemption({ orderId, productName, onResult }: { orderId:
   useEffect(() => {
     if (submitted) onResult?.();
   }, [submitted, onResult]);
+
+  useEffect(() => {
+    onBusyChange?.(busy);
+    return () => onBusyChange?.(false);
+  }, [busy, onBusyChange]);
 
   useEffect(() => {
     if (!view?.enabled || !submitted || settled) return;
@@ -111,7 +108,7 @@ export function AccountRedemption({ orderId, productName, onResult }: { orderId:
   async function send(action: 'preview' | 'submit' | 'refresh', body: Record<string, unknown>) {
     if (lock.current) return;
     lock.current = true; setBusy(true); setAction(action); setProgressPaused(false);
-    if (action === 'preview') { setValidationError(null); setConfirmed(false); }
+    if (action === 'preview') { setValidationError(null); setValidationCode(undefined); setConfirmed(false); }
     try {
       const next = await postApi<RedemptionView>(path + '/' + action, body, undefined, AbortSignal.timeout(90000));
       if (action === 'preview' && next.account && input.current) input.current.value = '';
@@ -119,9 +116,9 @@ export function AccountRedemption({ orderId, productName, onResult }: { orderId:
     } catch (cause) {
       setProgressPaused(true);
       const message = cause instanceof Error ? cause.message : '请求未确认，请刷新订单状态。';
-      if (action === 'preview') setValidationError(message);
+      if (action === 'preview') { setValidationError(message); setValidationCode(cause instanceof ApiError ? cause.code : undefined); }
       else $message.error(message);
-      if (action === 'submit' || (cause instanceof ApiError && cause.status === 409)) { setUpdated(null); resource.reload(); }
+      if (action === 'submit' || (action === 'refresh' && cause instanceof ApiError && cause.status === 409)) { setUpdated(null); resource.reload(); }
     } finally { lock.current = false; setBusy(false); }
   }
 
@@ -165,7 +162,7 @@ export function AccountRedemption({ orderId, productName, onResult }: { orderId:
       <div className="redemption-account-card" data-verified={account.validation === 'confirmed'}>
         <div className="redemption-account-card-heading">
           <h4><Icon name="shield-check" />{account.validation === 'confirmed' ? '账号检测通过' : '账号信息已识别'}</h4>
-          <span className="redemption-account-eligibility"><Icon name={account.validation === 'confirmed' ? 'check' : 'info'} />{account.validation === 'confirmed' ? '可以开通' : '待通道确认'}</span>
+          {account.validation === 'confirmed' && <span className="redemption-account-eligibility"><Icon name="check" />可以开通</span>}
         </div>
         <dl>
           <div className="redemption-account-email"><dt><Icon name="mail" />账号邮箱</dt><dd>{account.email}</dd></div>
@@ -194,8 +191,8 @@ export function AccountRedemption({ orderId, productName, onResult }: { orderId:
       <label htmlFor={'session-' + orderId}>ChatGPT Session</label>
       <textarea ref={input} id={'session-' + orderId} rows={5} maxLength={512000} autoComplete="off" spellCheck={false} required disabled={busy} aria-invalid={validationError ? true : undefined} aria-describedby={validationError ? `session-error-${orderId}` : undefined} onChange={() => setValidationError(null)} />
       {validationError && <div className="redemption-validation-error" role="alert" id={`session-error-${orderId}`}>
-        <Icon name="info" /><div><h4>{/过期|失效/.test(validationError) ? 'Session 已失效' : '账号验证未通过'}</h4>
-          <p>{validationError}</p>{/过期|失效/.test(validationError) && <p>请重新登录 ChatGPT，获取最新登录信息并复制完整内容后再试。</p>}
+        <Icon name="info" /><div><h4>{validationTitle}</h4>
+          <p>{validationError}</p>{sessionExpired && !validationError.includes('重新登录') && <p>请重新登录 ChatGPT，获取最新登录信息并复制完整内容后再试。</p>}
         </div>
       </div>}
       {policy.error && <button className="text-button" type="button" onClick={policy.reload}>重新读取条款</button>}

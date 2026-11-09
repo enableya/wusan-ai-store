@@ -31,9 +31,9 @@ export function refundRepository(db: DatabaseSync, gateway: PaymentGateway) {
       const now = new Date().toISOString();
       db.exec('BEGIN IMMEDIATE');
       try {
-        const timeout = db.prepare(`SELECT c.state,r.status FROM order_cancellations c
+        const cancellation = db.prepare(`SELECT c.state,r.status FROM order_cancellations c
           LEFT JOIN order_refund_reviews r ON r.order_id=c.order_id WHERE c.order_id=? AND c.state!='fulfilled'`).get(id);
-        if(timeout && timeout.status!=='approved') throw new OrderError(409,'REFUND_APPROVAL_REQUIRED','超时订单退款需要后台审核通过。');
+        if(cancellation && cancellation.status!=='approved') throw new OrderError(409,'REFUND_APPROVAL_REQUIRED','取消订单退款需要后台审核通过。');
         const existing = db.prepare('SELECT * FROM payment_refunds WHERE request_no = ?').get(requestNo);
         if (existing) {
           if (existing.order_id !== id || existing.amount_cents !== cents || existing.reason !== reason) throw new Error('Refund retry must reuse the original order, amount and reason.');

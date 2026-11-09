@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { expect, test } from '@playwright/test';
 import { openDatabase } from '../../server/database';
 import { hashAdminPassword, insertAdminAccount } from '../../server/admin';
+import { createOrderScenarios } from '../fixtures/orders';
 
 test.beforeAll(async () => {
   const db = openDatabase(process.env.E2E_ADMIN_DB!);
@@ -627,4 +628,53 @@ test('separate refund menu defaults to pending reviews and supports approval and
   expect(check.prepare('SELECT count(*) n FROM payment_refunds WHERE order_id IN (?,?)').get(...ids)!.n).toBe(0);
   expect(check.prepare('SELECT reviewed_by FROM order_refund_reviews WHERE order_id=?').get(ids[0])!.reviewed_by).toBe('admin');
   check.close();
+});
+
+test('order management displays recharge status for paid and free orders and updates on manual refresh', async ({ page }) => {
+  const keys = ['pending','closed','awaiting_recharge','queued','processing','settling','success','success_missing_email',
+    'no_charge','manual_review','renewal_ready','renewal_attention','renewal_paid','unknown','staff_awaiting','staff_success'];
+  const scenarios = createOrderScenarios().filter(s => keys.includes(s.key));
+  const db = openDatabase(process.env.E2E_ADMIN_DB!);
+  try {
+    for (const scenario of scenarios) {
+      const order = scenario.order;
+      const id = 'WS-ADMIN-RECHARGE-' + scenario.key;
+      db.prepare(`INSERT INTO orders(id,owner_hash,email,snapshot,status,created_at,expires_at,paid_at,idempotency_key,fingerprint,environment)
+        VALUES (?,'admin-recharge-fixture','',?,?,?,?,?,?,'fixture','sandbox')`).run(id,
+        JSON.stringify({productId:order.productId,productName:order.productName,category:'Plus',priceCents:order.priceCents,staffCheckout:order.staffCheckout}),
+        order.status,order.createdAt,order.expiresAt,order.paidAt,id);
+      if (order.recharge?.submitted) {
+        const voucher = db.prepare("INSERT INTO voucher_inventory(product_id,environment,code,priority) VALUES ('chatgpt-plus','sandbox',?,0)").run('MOCK-ADMIN-CARD-'+scenario.key);
+        db.prepare('INSERT INTO order_redemptions(order_id,voucher_id,submit_key,submitted,result) VALUES (?,?,?,1,?)').run(id,voucher.lastInsertRowid,id,JSON.stringify(order.recharge));
+      }
+      if (order.fulfillment) db.prepare('INSERT INTO order_fulfillment_details(order_id,recharge_email) VALUES (?,?)').run(id,order.fulfillment.rechargeEmail);
+    }
+    const token = randomBytes(32).toString('hex');
+    db.prepare('INSERT INTO admin_sessions(token_hash,username,expires_at) VALUES (?,?,?)').run(
+      createHash('sha256').update(token).digest('hex'),'admin',new Date(Date.now()+3600000).toISOString());
+    await page.context().addCookies([{name:'wusan_admin',value:token,url:'http://127.0.0.1:5210',httpOnly:true,sameSite:'Strict'}]);
+  } finally { db.close(); }
+  await page.goto('/admin?tab=orders');
+  await expect(page.getByRole('columnheader',{name:'充值状态',exact:true})).toBeAttached();
+  await page.getByLabel('订单号',{exact:true}).fill('WS-ADMIN-RECHARGE-');
+  await page.getByRole('button',{name:'查询',exact:true}).click();
+  await expect(page.locator('.order-table tbody tr')).toHaveCount(scenarios.length);
+  for (const scenario of scenarios) {
+    const row = page.locator('.order-table tbody tr').filter({has:page.getByRole('cell',{name:'WS-ADMIN-RECHARGE-'+scenario.key,exact:true})});
+    await expect(row.locator('.order-recharge-cell')).toHaveText(scenario.label);
+    await expect(row.locator('.order-recharge-cell [data-tone]')).toHaveAttribute('data-tone',scenario.tone);
+  }
+  const queued = page.locator('.order-table tbody tr').filter({has:page.getByRole('cell',{name:'WS-ADMIN-RECHARGE-queued',exact:true})});
+  const update = openDatabase(process.env.E2E_ADMIN_DB!);
+  update.prepare('UPDATE order_redemptions SET result=? WHERE order_id=?').run(JSON.stringify({state:'FULFILLED',settlement:'PAID',renewal:''}),'WS-ADMIN-RECHARGE-queued');
+  update.close();
+  await expect(queued.locator('.order-recharge-cell')).toHaveText('已受理，排队中');
+  await page.getByRole('button',{name:'刷新订单',exact:true}).click();
+  await expect(queued.locator('.order-recharge-cell')).toHaveText('充值成功');
+  for (const width of [1440,390]) {
+    await page.setViewportSize({width,height:1000});
+    await page.getByRole('columnheader',{name:'充值状态',exact:true}).scrollIntoViewIfNeeded();
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1)).toBe(false);
+    await page.screenshot({path:`artifacts/admin-recharge-status-${width}.png`,fullPage:true});
+  }
 });

@@ -10,6 +10,134 @@ const example: Order = {
 };
 
 for (const width of [390, 1440]) {
+  test(`${width}px coupon updates dialog price and preserves original price after creating an order`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    const order: Order = { ...example, priceCents: 1, originalPriceCents: 13000 };
+    await page.route('**/api/payments/config', route => route.fulfill({ json: { data: { enabled: true, environment: 'sandbox', message: '本地测试' } } }));
+    await page.route('**/api/coupons/quote', route => {
+      const { code } = route.request().postDataJSON();
+      return code === 'MOCK-SAVE' ? route.fulfill({ json: { data: { code, originalCents: 13000, discountCents: 12999, payableCents: 1 } } })
+        : route.fulfill({ status: 400, json: { error: { message: '模拟优惠券无效。' } } });
+    });
+    await page.route('**/api/orders', route => {
+      expect(route.request().postDataJSON()).toMatchObject({ expectedPriceCents: 13000, couponCode: 'MOCK-SAVE', expectedDiscountCents: 12999 });
+      return route.fulfill({ status: 201, json: { data: order } });
+    });
+    await page.route('**/api/orders/' + order.id + '/payment-qr', route => route.fulfill({ status: 503, json: { error: { message: '本地测试不打开支付网关。' } } }));
+    await page.route('**/api/orders/' + order.id + '/refresh', route => route.fulfill({ json: { data: order } }));
+    await page.goto('/products/chatgpt-plus');
+    await page.getByLabel('验证码', { exact: true }).fill(await page.getByRole('button', { name: /点击更换/ }).innerText());
+    await page.getByRole('button', { name: '立即购买', exact: true }).click();
+    const dialog = page.getByRole('dialog');
+    const price = dialog.locator('.purchase-dialog-price');
+    await expect(price.locator('strong')).toHaveText('¥130');
+    await expect(price.locator('del')).toHaveCount(0);
+    const coupon = dialog.getByLabel('优惠码（选填）');
+    await coupon.fill('MOCK-SAVE'); await coupon.blur();
+    await expect(price.locator('strong')).toHaveText('¥0.01');
+    await expect(price.locator('del')).toHaveText('¥130');
+    await page.screenshot({ path: `artifacts/coupon-dialog-price-${width}.png` });
+    await coupon.fill('INVALID');
+    await expect(price.locator('strong')).toHaveText('¥130');
+    await expect(price.locator('del')).toHaveCount(0);
+    await coupon.blur();
+    await expect(page.locator('.app-message--error')).toContainText('模拟优惠券无效');
+    await coupon.fill('MOCK-SAVE'); await coupon.blur();
+    await expect(price.locator('strong')).toHaveText('¥0.01');
+    await coupon.clear();
+    await expect(price.locator('strong')).toHaveText('¥130');
+    await expect(price.locator('del')).toHaveCount(0);
+    await coupon.fill('MOCK-SAVE'); await coupon.blur();
+    await expect(price.locator('strong')).toHaveText('¥0.01');
+    await dialog.getByLabel(/^联系方式/).fill('mock@example.invalid');
+    await dialog.getByLabel(/^查询密码/).fill('query123');
+    await dialog.getByRole('button', { name: '继续付款', exact: true }).click();
+    await expect(dialog.getByText(order.id, { exact: true })).toBeVisible();
+    await expect(price.locator('strong')).toHaveText('¥0.01');
+    await expect(price.locator('del')).toHaveText('¥130');
+    await dialog.getByRole('button', { name: '关闭购买弹窗' }).click();
+    await page.getByRole('button', { name: '查看订单进度', exact: true }).click();
+    await expect(price.locator('del')).toHaveText('¥130');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)).toBe(false);
+  });
+}
+
+for (const width of [390, 1440]) {
+  test(`${width}px order list displays recharge results separately from payment status`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    const states = [
+      { state: '', settlement: '', renewal: '', submitted: false, label: '待充值', tone: 'neutral' },
+      { state: 'QUEUED', settlement: 'UNKNOWN', renewal: '', submitted: true, label: '已受理，排队中', tone: 'progress' },
+      { state: 'FULFILLING', settlement: 'UNKNOWN', renewal: '', submitted: true, label: '处理中', tone: 'progress' },
+      { state: 'FULFILLED', settlement: 'UNKNOWN', renewal: '', submitted: true, label: '办理完成，等待结算确认', tone: 'progress' },
+      { state: 'FULFILLED', settlement: 'PAID', renewal: '', submitted: true, label: '充值成功', tone: 'success' },
+      { state: 'MANUAL_REVIEW', settlement: 'UNKNOWN', renewal: '', submitted: true, label: '待人工确认', tone: 'attention' },
+      { state: 'NO_CHARGE', settlement: 'NO_CHARGE', renewal: '', submitted: true, label: '充值未完成，本次未扣款', tone: 'failure' },
+      { state: '', settlement: '', renewal: 'ready', submitted: true, label: '续费已设置，等待下个周期扣款', tone: 'progress' },
+    ];
+    const orders: Order[] = states.map(({ label, tone, ...recharge }, index) => ({ ...example,
+      id: `WS1234567890123${index.toString().repeat(16)}`, status: 'paid', recharge,
+      ...(index === 4 ? { staffCheckout: true, priceCents: 0, fulfillment: { status: 'succeeded', rechargeEmail: 'recharge@example.invalid' } } : {}),
+    }));
+    await page.route('**/api/customer/session', route => route.fulfill({ json: { data: { id: 'test', username: 'test', inviteCode: 'test', staffCheckout: true } } }));
+    await page.route('**/api/orders', route => route.fulfill({ json: { data: orders } }));
+    await page.goto('/orders');
+    for (const [index, state] of states.entries()) {
+      const row = page.locator('.server-order-row').filter({ hasText: orders[index].id });
+      await expect(row.locator('.order-recharge-status')).toHaveText(`充值状态：${state.label}`);
+      await expect(row.locator('.order-recharge-status')).toHaveAttribute('data-tone', state.tone);
+    }
+    const success = page.locator('.server-order-row').filter({ hasText: orders[4].id });
+    await expect(success.locator('.order-recharge-email')).toHaveText('充值邮箱：recharge@example.invalid');
+    await expect(success.locator('.status-badge')).toHaveText('免付开通');
+    await page.reload();
+    await expect(success.locator('.order-recharge-status')).toHaveText('充值状态：充值成功');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)).toBe(false);
+    await page.screenshot({ path: `artifacts/order-recharge-status-${width}.png`, fullPage: true });
+  });
+}
+
+for (const width of [390, 1440]) {
+  test(`${width}px unavailable cancellation displays its reason in the list and detail`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    const reason = '暂无法核实支付状态，当前不能取消订单。';
+    const order = { ...example, cancelAction: null, cancelUnavailableReason: reason };
+    await page.route('**/api/orders', route => route.fulfill({ json: { data: [order] } }));
+    await page.route('**/api/orders/' + order.id, route => route.fulfill({ json: { data: order } }));
+    await page.route('**/api/payments/config', route => route.fulfill({ json: { data: { enabled: false, environment: 'sandbox', message: '本地支付关闭' } } }));
+    for (const entry of ['/orders', `/orders/${order.id}`]) {
+      await page.goto(entry);
+      await expect(page.getByRole('button', { name: '取消订单', exact: true })).toBeDisabled();
+      await expect(page.getByText(reason, { exact: true })).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)).toBe(false);
+    }
+  });
+}
+
+for (const width of [390, 1440]) {
+  test(`${width}px order list shows recharge emails only for successful subscriptions`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    const email = 'long-recharge-account-address-for-layout-check@example.invalid';
+    const complete: Order = { ...example, status: 'paid', fulfillment: { status: 'succeeded', rechargeEmail: email } };
+    const legacy: Order = { ...complete, id: 'WS1234567890123ffffffffffffffff', fulfillment: { status: 'succeeded', rechargeEmail: null } };
+    const pending: Order = { ...example, id: 'WS12345678901230000000000000000' };
+    const paid: Order = { ...pending, id: 'WS12345678901231111111111111111', status: 'paid' };
+    await page.route('**/api/orders', route => route.fulfill({ json: { data: [complete, legacy, pending, paid] } }));
+    await page.goto('/orders');
+    const completedRow = page.locator('.server-order-row').filter({ hasText: complete.id });
+    await expect(completedRow.locator('.order-recharge-email')).toHaveText(`充值邮箱：${email}`);
+    await expect(page.locator('.server-order-row').filter({ hasText: legacy.id }).locator('.order-recharge-email')).toHaveText('充值邮箱：未记录');
+    for (const order of [pending, paid]) await expect(page.locator('.server-order-row').filter({ hasText: order.id }).locator('.order-recharge-email')).toHaveCount(0);
+    await page.reload();
+    await expect(completedRow.locator('.order-recharge-email')).toHaveText(`充值邮箱：${email}`);
+    const layout = await completedRow.locator('.order-recharge-email').evaluate(element => ({ width: element.clientWidth, content: element.scrollWidth }));
+    expect(layout.content).toBeLessThanOrEqual(layout.width + 1);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)).toBe(false);
+    await page.screenshot({ path: `artifacts/order-list-recharge-email-${width}.png`, fullPage: true });
+  });
+}
+
+for (const width of [390, 1440]) {
   for (const status of ['pending', 'paid'] as const) {
     for (const entry of ['list', 'detail'] as const) {
       test(`${width}px ${entry} can cancel an eligible ${status} order with confirmation`,async({page})=>{
@@ -62,6 +190,54 @@ test('stale cancellation eligibility refreshes the order and does not hide a ver
   await expect(page.getByRole('button',{name:'取消订单',exact:true})).toHaveCount(0);
   await expect(page.locator('.app-message--error')).toContainText('订单已提交充值，不能取消。');
 });
+
+for (const width of [390, 1440]) {
+  test(`${width}px cancellation follows validation and recharge submission on the same detail page`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    const order: Order = { ...example, status: 'paid', cancelAction: 'request_refund' };
+    const initial = { enabled: true, submitted: false, account: null, result: null, rechargeEmail: null };
+    const path = '**/api/orders/' + order.id;
+    let finishPreview: () => void = () => {};
+    let finishSubmit: () => void = () => {};
+    let submitted = false;
+    await page.route('**/api/payments/config', route => route.fulfill({ json: { data: { enabled: false, environment: 'sandbox', message: '本地测试' } } }));
+    await page.route('**/api/orders', route => route.fulfill({ json: { data: [{ ...order, cancelAction: submitted ? null : 'request_refund' }] } }));
+    await page.route(path, route => route.fulfill({ json: { data: order } }));
+    await page.route(path + '/redemption', route => route.fulfill({ json: { data: initial } }));
+    await page.route(path + '/redemption/policy', route => route.fulfill({ json: { data: { terms: 'test', privacy: 'test' } } }));
+    await page.route(path + '/redemption/preview', async route => {
+      await new Promise<void>(resolve => { finishPreview = resolve; });
+      await route.fulfill({ json: { data: { ...initial, account: { email: 'buyer@example.invalid', plan: 'free', validation: 'confirmed', confirmationId: 'test' } } } });
+    });
+    await page.route(path + '/redemption/submit', async route => {
+      await new Promise<void>(resolve => { finishSubmit = resolve; });
+      submitted = true;
+      await route.fulfill({ json: { data: { ...initial, submitted, result: { state: 'QUEUED', settlement: 'UNKNOWN', orderNo: 'TEST', progress: 0, renewal: '' } } } });
+    });
+    await page.goto(`/orders/${order.id}`);
+    const cancel = page.getByRole('button', { name: '取消订单', exact: true });
+    await expect(cancel).toBeEnabled();
+    await page.getByLabel('ChatGPT Session').fill('{"accessToken":"mock-only"}');
+    const previewRequest = page.waitForRequest('**/redemption/preview');
+    await page.getByRole('button', { name: '验证账号并继续' }).click();
+    await previewRequest;
+    await expect(cancel).toBeDisabled();
+    finishPreview();
+    await expect(page.getByText('账号检测通过', { exact: true })).toBeVisible();
+    await expect(cancel).toBeEnabled();
+    await page.getByLabel('我已确认以上账号，将为此账号充值').check();
+    const submitRequest = page.waitForRequest('**/redemption/submit');
+    await page.getByRole('button', { name: '确认并提交充值' }).click();
+    await submitRequest;
+    await expect(cancel).toBeDisabled();
+    finishSubmit();
+    await expect(page.locator('.redemption-loading-label')).toHaveText('已受理，排队中');
+    await expect(cancel).toHaveCount(0);
+    await page.goto('/orders');
+    await expect(page.locator('.server-order-row')).toContainText(order.id);
+    await expect(cancel).toHaveCount(0);
+  });
+}
 
 test('reordering a closed order opens the same product detail as the homepage', async ({ page }) => {
   await page.route(`**/api/orders/${example.id}`, route => route.fulfill({ json: { data: { ...example, status: 'closed' } } }));
@@ -354,3 +530,49 @@ test('admin referral module displays attribution, amounts, status and filters', 
   await expect(page.getByText('已获得 · 待结算',{exact:true}).last()).toBeVisible();
   await page.screenshot({path:'/tmp/wusan-admin-referrals.png',fullPage:true});
 });
+
+for (const width of [390, 1440]) {
+  test(`${width}px account validation shows specific causes and keeps Session input for retry`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    const path = '**/api/orders/' + example.id;
+    const view = { enabled: true, submitted: false, account: null, result: null, rechargeEmail: null };
+    const failures = [
+      {status:400,code:'SESSION_INVALID_JSON',message:'Session JSON 格式不正确或复制不完整，请重新复制页面全部内容。',title:'登录信息不完整或格式有误'},
+      {status:400,code:'SESSION_EXPIRED',message:'ChatGPT Session 已过期，请重新登录 ChatGPT 后获取最新登录信息。',title:'Session 已过期'},
+      {status:409,code:'REDEMPTION_EXPIRED',message:'本次账号确认会话已过期，请重新验证账号。',title:'账号确认已过期'},
+      {status:502,code:'REDEMPTION_CONNECTION_FAILED',message:'暂时无法连接充值服务，请稍后重试；当前无法确定是否为 Session 问题。',title:'暂时无法验证账号'},
+      {status:409,code:'PORTAL_PRECHECK_FAILED',message:'账号预检未通过：当前账号订阅状态暂不支持此套餐。',title:'账号验证未通过'},
+    ];
+    let attempts=0;
+    await page.route('**/api/payments/config',route=>route.fulfill({json:{data:{enabled:false,environment:'sandbox',message:'本地测试'}}}));
+    await page.route(path,route=>route.fulfill({json:{data:{...example,status:'paid'}}}));
+    await page.route(path+'/redemption',route=>route.fulfill({json:{data:view}}));
+    await page.route(path+'/redemption/policy',route=>route.fulfill({json:{data:{terms:'test',privacy:'test'}}}));
+    await page.route(path+'/redemption/preview',route=>{
+      const index=attempts++;
+      if(index<failures.length){const failure=failures[index];return route.fulfill({status:failure.status,json:{error:{code:failure.code,message:failure.message}}});}
+      return route.fulfill({json:{data:{...view,account:{email:'mock@example.invalid',plan:'free',validation:index===failures.length?'local_only':'confirmed',confirmationId:'test-confirmation'}}}});
+    });
+    await page.goto(`/orders/${example.id}`);
+    const input=page.getByLabel('ChatGPT Session');
+    const value=JSON.stringify({user:{email:'mock@example.invalid'},accessToken:'mock-only',expires:'2099-01-01T00:00:00Z'});
+    await input.fill(value);
+    for(const failure of failures){
+      await page.getByRole('button',{name:attempts===0?'验证账号并继续':'重新检测账号',exact:true}).click();
+      await expect(page.locator('.redemption-validation-error h4')).toHaveText(failure.title);
+      await expect(page.locator('.redemption-validation-error')).toContainText(failure.message);
+      await expect(input).toHaveValue(value);
+      if(failure.code==='SESSION_EXPIRED')await page.screenshot({path:`artifacts/session-expired-${width}.png`});
+      if(failure.code==='REDEMPTION_CONNECTION_FAILED')await expect(page.locator('.redemption-validation-error h4')).not.toContainText('Session 已失效');
+    }
+    await page.getByRole('button',{name:'重新检测账号',exact:true}).click();
+    await expect(page.getByText('账号信息已识别',{exact:true})).toBeVisible();
+    await expect(page.locator('.redemption-account-eligibility')).toHaveCount(0);
+    await expect(page.getByText('待通道确认',{exact:true})).toHaveCount(0);
+    await page.getByRole('button',{name:'更换账号',exact:true}).click();
+    await input.fill(value);
+    await page.getByRole('button',{name:'验证账号并继续',exact:true}).click();
+    await expect(page.locator('.redemption-account-eligibility')).toHaveText('可以开通');
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1)).toBe(false);
+  });
+}

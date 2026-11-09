@@ -9,6 +9,7 @@ import { openDatabase } from './database.ts';
 import { createApiServer } from './app.ts';
 import type { Order, PaymentConfig } from '../src/types/orders.ts';
 import { hashAdminPassword } from './admin.ts';
+import { orderRepository } from './orders.ts';
 
 const merchant = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const alipay = generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -427,6 +428,23 @@ test('customer cancellation checks ownership and origin, closes unpaid trades, p
   assert.equal(db.prepare('SELECT count(*) n FROM payment_refunds').get()!.n,0);
 });
 
+test('unavailable payment verification explains disabled cancellation without allowing an unsafe write', async t => {
+  const { request, notify, db } = await setup(t);
+  const order = (await request('/api/orders', input)).body.data;
+  const disabled = orderRepository(db, { ...gateway, status: { ...gateway.status, enabled: false } });
+  const owner = String(db.prepare('SELECT owner_hash FROM orders WHERE id=?').get(order.id)!.owner_hash);
+  for (const paid of [false, true]) {
+    if (paid) await notify({ out_trade_no: order.id });
+    const current = disabled.owned(order.id, owner);
+    assert.equal(current.cancelAction, null);
+    assert.match(current.cancelUnavailableReason!, /暂无法核实支付状态/);
+    assert.throws(() => disabled.cancellationEligible(order.id, owner), { code: 'PAYMENT_NOT_CONFIGURED' });
+  }
+  db.prepare("UPDATE orders SET status='closed' WHERE id=?").run(order.id);
+  assert.equal(disabled.owned(order.id, owner).cancelUnavailableReason, undefined);
+  assert.equal(db.prepare('SELECT count(*) n FROM order_cancellations').get()!.n, 0);
+});
+
 test('a payment found while canceling or arriving after cancellation is preserved and never silently refunded',async t=>{
   const {request,setTrade,notify,db,closeCalls}=await setup(t);
   const order=(await request('/api/orders',input)).body.data;
@@ -464,6 +482,38 @@ test('an owned paid order can request cancellation before timeout and creates ex
   assert.match(result.body.data.cancellation!.message,/用户申请取消/);
   await request(path,{expectedAction:'request_refund'});
   assert.equal(db.prepare('SELECT count(*) n FROM order_refund_reviews').get()!.n,1);assert.equal(db.prepare('SELECT count(*) n FROM payment_refunds').get()!.n,0);
+});
+
+test('order reads expose the actual recharge email only after subscription succeeds and retain ownership checks', async t => {
+  const { request, notify, db } = await setup(t);
+  const order = (await request('/api/orders', input)).body.data;
+  await notify({ out_trade_no: order.id });
+  assert.deepEqual((await request(`/api/orders/${order.id}`)).body.data.recharge,
+    { submitted: false, state: '', settlement: '', renewal: '' });
+  const voucher = db.prepare("INSERT INTO voucher_inventory(product_id,environment,code,priority) VALUES ('chatgpt-plus','sandbox','PRIVATE-VOUCHER',0)").run();
+  db.prepare('INSERT INTO order_redemptions(order_id,voucher_id,submit_key,submitted) VALUES (?,?,?,1)').run(order.id, voucher.lastInsertRowid, 'private-submit-key');
+  db.prepare('INSERT INTO order_fulfillment_details(order_id,recharge_email) VALUES (?,?)').run(order.id, 'recharge@example.invalid');
+  for (const [result, succeeded] of [
+    [null, false], [{ state: 'QUEUED' }, false], [{ state: 'FULFILLED', settlement: 'UNKNOWN' }, false],
+    [{ renewal: 'ready' }, false], [{ state: 'NO_CHARGE', settlement: 'NO_CHARGE' }, false],
+    [{ state: 'FULFILLED', settlement: 'PAID' }, true], [{ renewal: 'paid' }, true],
+  ] as const) {
+    db.prepare('UPDATE order_redemptions SET result=? WHERE order_id=?').run(JSON.stringify(result), order.id);
+    const list = (await request<Order[]>('/api/orders')).body.data;
+    const detail = (await request(`/api/orders/${order.id}`)).body.data;
+    const expected = succeeded ? { status: 'succeeded', rechargeEmail: 'recharge@example.invalid' } : undefined;
+    assert.deepEqual(list[0].fulfillment, expected);
+    assert.deepEqual(detail.fulfillment, expected);
+    const recharge = { submitted: true, state: result && 'state' in result ? result.state : '',
+      settlement: result && 'settlement' in result ? result.settlement : '', renewal: result && 'renewal' in result ? result.renewal : '' };
+    assert.deepEqual(list[0].recharge, recharge);
+    assert.deepEqual(detail.recharge, recharge);
+    assert.doesNotMatch(JSON.stringify(list), /PRIVATE-VOUCHER|private-submit-key|private@example.com/);
+  }
+  assert.deepEqual((await request<Order[]>('/api/orders', undefined, { cookie: '' })).body.data, []);
+  assert.equal((await request(`/api/orders/${order.id}`, undefined, { cookie: '' })).response.status, 404);
+  db.prepare('UPDATE order_fulfillment_details SET recharge_email=NULL WHERE order_id=?').run(order.id);
+  assert.deepEqual((await request<Order[]>('/api/orders')).body.data[0].fulfillment, { status: 'succeeded', rechargeEmail: null });
 });
 
 test('refund reservations survive unknown results, enforce limits and immutable retries', async t => {
@@ -536,6 +586,8 @@ test('coupon management requires permission and validates restrictions', async t
   assert.equal((await request('/api/orders', { ...input, couponCode: code, expectedDiscountCents: 500 })).body.error.code, 'COUPON_CHANGED');
   const order = await request('/api/orders', { ...input, couponCode: code, expectedDiscountCents: 600 });
   assert.equal(order.body.data.priceCents, 12400);
+  assert.equal(order.body.data.originalPriceCents, 13000);
+  assert.equal((await request(`/api/orders/${order.body.data.id}`)).body.data.originalPriceCents, 13000);
   assert.equal((await request(`/api/admin/coupons/${id}/update`, { ...edited, usageLimit: 0 }, { cookie })).response.status, 400);
   assert.equal((await request(`/api/admin/coupons/${id}/delete`, {}, { cookie })).response.status, 200);
   assert.equal((await request('/api/coupons/quote', { code, productId: 'chatgpt-plus' })).response.status, 400);

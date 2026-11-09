@@ -9,6 +9,7 @@ import { Icon } from './Icon';
 import { SupportButton } from './SupportButton';
 import { AccountRedemption } from './AccountRedemption';
 import { PurchaseForm, PurchaseSummary } from './PurchaseForm';
+import type { CouponQuote } from './PurchaseForm';
 import { useApiResource } from '../hooks/useApiResource';
 import { postApi } from '../services/api';
 import { money } from '../lib/format';
@@ -102,6 +103,8 @@ function PurchaseDialog({ product, open, onClose, order, onOrder }: {
   const [qr, setQr] = useState('');
   const [qrLoading, setQrLoading] = useState(false);
   const [qrFailed, setQrFailed] = useState(false);
+  const [couponQuote, setCouponQuote] = useState<CouponQuote | null>(null);
+  useEffect(() => { if (!open || order) setCouponQuote(null); }, [open, order]);
   const queryFailed = useRef(false);
   const $message = useMessage();
   const [now, setNow] = useState(Date.now);
@@ -176,7 +179,9 @@ function PurchaseDialog({ product, open, onClose, order, onOrder }: {
   const [redemptionStarted, setRedemptionStarted] = useState(false);
   const steps = order?.staffCheckout ? ['连接账号', '开通结果'] : ['信息确认', '确认付款', '连接账号', '开通结果'];
   const step = order?.staffCheckout ? Number(redemptionStarted) : order?.status === 'paid' ? (redemptionStarted ? 3 : 2) : order ? 1 : 0;
-  const amount = order?.priceCents ?? product.priceCents;
+  const amount = order?.priceCents ?? couponQuote?.payableCents ?? product.priceCents;
+  const originalAmount = order ? order.originalPriceCents : couponQuote?.originalCents;
+  const discounted = !order?.staffCheckout && amount !== null && originalAmount != null && originalAmount > amount;
   return createPortal(<dialog ref={dialog} className="purchase-dialog" aria-labelledby="purchase-dialog-title" onCancel={event => { event.preventDefault(); onClose(); }}>
     <header className="purchase-dialog-header">
       <div><h2 id="purchase-dialog-title">{order ? '订单编号' : '确认购买'}</h2>{order && <p className="mono">{order.id}</p>}</div>
@@ -187,7 +192,9 @@ function PurchaseDialog({ product, open, onClose, order, onOrder }: {
       <div className="purchase-dialog-product">
         <Icon name="package" />
         <div><h3>{order?.productName ?? product.name}</h3><p>{order?.periodMonths ?? product.periodMonths} 个月订阅</p></div>
-        <div><strong>{amount === null ? '待确认' : `¥${money(amount)}`}</strong><p>数量 × 1</p></div>
+        <div className="purchase-dialog-price" aria-live="polite"><div className="purchase-dialog-price-amounts" data-discounted={discounted}>
+          <strong>{amount === null ? '待确认' : `¥${money(amount)}`}</strong>
+          {discounted && <del title="优惠前价格">¥{money(originalAmount)}</del>}</div><p>数量 × 1</p></div>
       </div>
       <ol className="purchase-dialog-steps" data-staff-checkout={order?.staffCheckout}>
         {steps.map((label, index) =>
@@ -195,7 +202,7 @@ function PurchaseDialog({ product, open, onClose, order, onOrder }: {
             <span aria-hidden="true">{index < step ? '✓' : index + 1}</span>{label}
           </li>)}
       </ol>
-      {open && !order && <PurchaseForm product={product} onCreated={created} />}
+      {open && !order && <PurchaseForm product={product} onCreated={created} onQuoteChange={setCouponQuote} />}
       {open && order?.cancellation && <section className="purchase-qr-panel" aria-label="订单取消状态"><h3>{order.status === 'cancelled' ? '订单已取消' : '超时退款处理中'}</h3><p>{order.cancellation.message}</p></section>}
       {open && order?.status === 'paid' && !order.cancellation && <>
         <p>{order.staffCheckout ? '免付开通订单已创建' : '付款已确认'}</p>

@@ -14,6 +14,7 @@ import { formatDate, money } from '../lib/format';
 import { ApiState } from '../components/ApiState';
 import type { Order } from '../types/orders';
 import { orderStatus } from '../types/orders';
+import { orderRechargeTag } from '../lib/redemption-status';
 
 export default function OrdersPage() {
   usePageTitle('我的订单');
@@ -30,6 +31,11 @@ export default function OrdersPage() {
   const normalized = query.trim().toLowerCase();
   const filtered = selections.filter((selection) => !normalized || selection.productName.toLowerCase().includes(normalized) || selection.id.includes(normalized));
   const visibleOrders = (orders.data || []).filter(order => !order.staffCheckout || staffCheckout);
+  const orderCounts = visibleOrders.reduce<Record<string, number>>((counts, order) => {
+    const status = order.staffCheckout ? '免付开通' : orderStatus[order.status];
+    counts[status] = (counts[status] || 0) + 1;
+    return counts;
+  }, { 全部: visibleOrders.length });
   const matching = visibleOrders.filter(order => (filter === '全部' || (order.staffCheckout ? '免付开通' : orderStatus[order.status]) === filter)
     && (!normalized || order.productName.toLowerCase().includes(normalized) || order.id.toLowerCase().includes(normalized)));
   const recover = () => openModal({ type: 'recover' });
@@ -40,12 +46,15 @@ export default function OrdersPage() {
       <button type="button" className="text-button" onClick={orders.reload}>刷新订单</button></Notice>
     <div className="orders-toolbar"><div className="underlined-tabs" role="group" aria-label="订单状态">
       {['全部', '待付款', '已付款', '已关闭', '订单已取消', ...(staffCheckout ? ['免付开通'] : [])].map((value) => <button key={value} type="button" data-order-filter={value}
-        aria-pressed={filter === value} className={filter === value ? 'active' : ''} onClick={() => setFilter(value)}>
-        {value}{value === '全部' && <span className="count-label">{visibleOrders.length}</span>}
+        aria-label={value} aria-pressed={filter === value} className={filter === value ? 'active' : ''} onClick={() => setFilter(value)}>
+        {value}{orderCounts[value] > 0 && <span className="count-label">{orderCounts[value]}</span>}
       </button>)}
     </div><div className="search-field"><Icon name="search" /><input id="order-search" type="search" placeholder="搜索订单号或商品名称" aria-label="搜索订单号或商品名称" maxLength={100} value={query} onChange={(event) => setQuery(event.target.value)} /></div></div>
     <div id="order-results" aria-live="polite">{!orders.data ? <ApiState compact error={orders.error} retry={orders.reload} title="正在读取订单" /> : matching.length > 0 ? <div className="draft-list">{matching.map(order => <div className="draft-row server-order-row" key={order.id}>
-      <div className="draft-info"><strong>{order.productName}</strong><span className="mono">{order.id}</span><span>{formatDate(order.createdAt)}{order.environment === 'sandbox' ? ' · 沙箱测试' : ''}</span>{order.cancellation && <span className="order-cancellation-note">{order.cancellation.message}</span>}</div>
+      <div className="draft-info"><strong>{order.productName}</strong><span className="mono">{order.id}</span><span>{formatDate(order.createdAt)}{order.environment === 'sandbox' ? ' · 沙箱测试' : ''}</span>
+        <span className="order-recharge-status" data-tone={orderRechargeTag(order).tone}>充值状态：<span className="order-recharge-badge">{orderRechargeTag(order).label}</span></span>
+        {order.fulfillment?.status === 'succeeded' && <span className="order-recharge-email">充值邮箱：{order.fulfillment.rechargeEmail || '未记录'}</span>}
+        {order.cancellation && <span className="order-cancellation-note" data-state={order.cancellation.state}>{order.cancellation.message}</span>}</div>
       <span className="draft-price">¥{money(order.priceCents)}</span><span className="status-badge pending">{order.staffCheckout ? '免付开通' : orderStatus[order.status]}</span>
       <div className="server-order-actions"><CancelOrderButton order={order} onChanged={orders.reload} /><Link className="text-button" to={`/orders/${order.id}`}>{order.status === 'pending' ? '查看 / 付款' : '查看订单'} <Icon name="arrow-right" /></Link></div>
     </div>)}</div> : <div className="empty-state">

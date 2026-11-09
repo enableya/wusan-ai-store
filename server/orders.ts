@@ -42,6 +42,8 @@ function view(row: Record<string, unknown>): Order {
     status: row.status as Order['status'], createdAt: row.created_at as string,
     expiresAt: row.expires_at as string, paidAt: row.paid_at as string | null,
     tradeNo: row.trade_no as string | null, environment: row.environment as Order['environment'],
+    ...(snapshot.couponCode && Number.isSafeInteger(snapshot.originalPriceCents) && snapshot.originalPriceCents > snapshot.priceCents
+      ? { originalPriceCents: snapshot.originalPriceCents as number } : {}),
     ...(snapshot.staffCheckout === true ? { staffCheckout: true as const } : {}),
   };
 }
@@ -50,13 +52,26 @@ export function orderRepository(db: DatabaseSync, gateway: PaymentGateway) {
   const catalog = catalogRepository(db);
   const { environment } = gateway.status;
   const coupons = couponRepository(db, environment);
+  const completedFulfillment = db.prepare(`SELECT f.recharge_email FROM order_redemptions r
+    LEFT JOIN order_fulfillment_details f ON f.order_id = r.order_id
+    WHERE r.order_id = ? AND (json_extract(r.result, '$.settlement') = 'PAID'
+      OR json_extract(r.result, '$.renewal') = 'paid')`);
+  const rechargeStatus = db.prepare(`SELECT submitted, json_extract(result, '$.state') AS state,
+    json_extract(result, '$.settlement') AS settlement, json_extract(result, '$.renewal') AS renewal
+    FROM order_redemptions WHERE order_id = ?`);
   const toView = (row: Record<string, unknown>): Order => {
     const order = view(row);
     const cancellation = cancellationView(db, order.id);
+    const fulfillment = order.status === 'paid' && !cancellation ? completedFulfillment.get(order.id) : undefined;
+    if (fulfillment) order.fulfillment = { status: 'succeeded', rechargeEmail: fulfillment.recharge_email ? String(fulfillment.recharge_email) : null };
+    if (order.status === 'paid' && !cancellation) {
+      const recharge = rechargeStatus.get(order.id);
+      order.recharge = { submitted: Boolean(recharge?.submitted), state: String(recharge?.state || ''),
+        settlement: String(recharge?.settlement || ''), renewal: String(recharge?.renewal || '') };
+    }
     const context = JSON.parse(String(row.snapshot)).payment;
     let cancelAction: Order['cancelAction'] = null;
-    if (!cancellation && !order.staffCheckout && gateway.status.enabled && order.environment === environment
-      && context?.appId === gateway.appId && context?.sellerId === gateway.sellerId) {
+    if (!cancellation && !order.staffCheckout && order.environment === environment) {
       if (order.status === 'pending') cancelAction = 'cancel';
       if (order.status === 'paid') {
         const blocked = db.prepare(`SELECT 1 FROM order_redemptions WHERE order_id=? AND
@@ -66,6 +81,12 @@ export function orderRepository(db: DatabaseSync, gateway: PaymentGateway) {
           UNION ALL SELECT 1 FROM payment_refunds WHERE order_id=?`).get(order.id,Date.now(),order.id,order.id);
         if (!blocked) cancelAction = 'request_refund';
       }
+    }
+    if (cancelAction && (!gateway.status.enabled || context?.appId !== gateway.appId || context?.sellerId !== gateway.sellerId)) {
+      order.cancelUnavailableReason = !gateway.status.enabled
+        ? '暂无法核实支付状态，当前不能取消订单。'
+        : '该订单的收款配置已变更，请联系客服核实后取消。';
+      cancelAction = null;
     }
     return cancellation ? { ...order, cancelAction, cancellation, ...(cancellation.cancelledAt || cancellation.state === 'cancelled' ? { status: 'cancelled' as const } : {}) } : { ...order, cancelAction };
   };

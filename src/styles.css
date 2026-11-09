@@ -349,7 +349,8 @@ textarea { resize: vertical; min-height: 100px; max-height: 400px; }
 .orders-page .page-heading p, .orders-page .notice { font-size: 15px; }
 .orders-page .heading-with-action .button, .orders-page .text-button { font-size: 15px; }
 .orders-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 25px; border-bottom: 1px solid var(--line); }
-.orders-toolbar .underlined-tabs { border: 0; gap: 28px; }
+.orders-toolbar .underlined-tabs { border: 0; gap: 28px; min-width: 0; max-width: 100%; overflow-x: auto; }
+.orders-toolbar .underlined-tabs button { flex-shrink: 0; }
 .orders-toolbar .underlined-tabs button { padding: 16px 0; font-size: 15px; }
 .count-label { display: inline-flex; align-items: center; justify-content: center; min-width: 17px; height: 17px; padding: 0 4px; background: var(--soft); border: 1px solid var(--line); color: var(--muted); font-size: 10px; border-radius: 3px; font-weight: 400; }
 .orders-toolbar .count-label { min-width: 20px; height: 20px; font-size: 12px; }
@@ -724,6 +725,13 @@ a.support-contact-value:hover { text-decoration: underline; }
 /* Order identifiers and payment actions remain readable on narrow screens. */
 .order-detail-main .mono, .server-order-row .mono { overflow-wrap: anywhere; word-break: break-all; }
 .server-order-row .draft-info { min-width: 0; }
+.server-order-row .order-recharge-email { overflow-wrap: anywhere; }
+.server-order-row .draft-info > .order-recharge-status { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; }
+.order-recharge-badge { display: inline-block; max-width: 100%; padding: 3px 8px; border-radius: 5px; font-size: 12px; font-weight: 500; line-height: 1.6; overflow-wrap: anywhere; color: var(--muted); background: var(--soft); }
+.order-recharge-status[data-tone='success'] .order-recharge-badge { color: light-dark(#20643c, #a0e2b8); background: light-dark(#eaf8ef, #223e2e); }
+.order-recharge-status[data-tone='progress'] .order-recharge-badge { color: var(--mint-text); background: var(--mint); }
+.order-recharge-status[data-tone='attention'] .order-recharge-badge { color: light-dark(#805514, #ffda91); background: light-dark(#fff5df, #3e3422); }
+.order-recharge-status[data-tone='failure'] .order-recharge-badge { color: var(--danger); background: var(--rose-soft); }
 #checkout-form > .text-button { display: flex; }
 @media (max-width: 680px) {
   .server-order-row { flex-wrap: wrap; }

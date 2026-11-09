@@ -3,6 +3,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { Order } from '../src/types/orders.ts';
 import type { RedemptionAccount, RedemptionPolicy, RedemptionResult, RedemptionView } from '../src/types/redemption.ts';
 import { OrderError } from './orders.ts';
+import { redemptionUpstreamError } from './redemption-errors.ts';
 
 const endpoint = 'https://lovecodex.cn/api';
 const record = (value: unknown): Record<string, unknown> =>
@@ -46,20 +47,32 @@ export function redemptionRepository(db: DatabaseSync, fetcher = fetch) {
     };
   };
 
-  async function request(path: string, options: RequestInit = {}) {
+  async function request(path: string, options: RequestInit = {}, privateValues: string[] = []) {
     try {
       const response = await fetcher(endpoint + path, {
         ...options, redirect: 'error',
         headers: { 'Content-Type': 'application/json', ...options.headers },
         signal: AbortSignal.timeout(25000),
       });
-      if (response.status === 429) throw new OrderError(429, 'REDEMPTION_RATE_LIMITED', '兑换服务请求较多，请稍后再试。');
-      const body = record(await response.json());
-      if (!response.ok || body.ok !== true) throw new Error();
+      if (response.status === 429) throw new OrderError(429, 'REDEMPTION_RATE_LIMITED', '充值服务请求较多，请稍后再试。');
+      let body: Record<string, unknown>;
+      try { body = record(await response.json()); }
+      catch { throw new OrderError(502, 'REDEMPTION_INVALID_RESPONSE', '充值服务返回了无法识别的响应，请稍后重试；当前无法确定是否为 Session 问题。'); }
+      if (!response.ok || body.ok !== true) {
+        const input = typeof options.body === 'string' ? record(JSON.parse(options.body)) : {};
+        const session = typeof input.sessionInput === 'string' ? record(JSON.parse(input.sessionInput)) : {};
+        const headers = new Headers(options.headers);
+        const secrets = [...privateValues, input.sessionInput, input.voucherCode, input.claimToken, session.accessToken, headers.get('X-Redemption-Token')]
+          .filter((value): value is string => typeof value === 'string' && !!value);
+        throw redemptionUpstreamError(body, response.status, path.endsWith('/session'), secrets);
+      }
       return body;
     } catch (error) {
       if (error instanceof OrderError) throw error;
-      throw new OrderError(502, 'REDEMPTION_UPSTREAM', '兑换服务暂未确认此请求，请稍后查询。');
+      if (error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name)) {
+        throw new OrderError(502, 'REDEMPTION_TIMEOUT', '连接充值服务超时，尚未确认请求结果，请稍后重试。');
+      }
+      throw new OrderError(502, 'REDEMPTION_CONNECTION_FAILED', '暂时无法连接充值服务，请稍后重试；当前无法确定是否为 Session 问题。');
     }
   }
 
@@ -126,15 +139,18 @@ export function redemptionRepository(db: DatabaseSync, fetcher = fetch) {
     preview(order: Order, input: Record<string, unknown>) {
       return exclusive(order, async () => {
         const sessionInput = string(input.sessionInput, 512000);
+        if (typeof input.sessionInput === 'string' && Buffer.byteLength(input.sessionInput) > 512000) {
+          throw new OrderError(400, 'SESSION_TOO_LARGE', '登录信息过大，请确认复制的是完整 Session JSON，而不是网页内容。');
+        }
         let session: Record<string, unknown>;
         try { session = record(JSON.parse(sessionInput)); }
-        catch { throw new OrderError(400, 'INVALID_SESSION', '请粘贴完整的 Session JSON。'); }
+        catch { throw new OrderError(400, 'SESSION_INVALID_JSON', 'Session JSON 格式不正确或复制不完整，请重新复制页面全部内容。'); }
         const email = string(record(session.user).email);
         const expiry = Date.parse(string(session.expires));
-        if (!string(session.accessToken, 65536) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
-          !Number.isFinite(expiry) || expiry <= Date.now() || Buffer.byteLength(sessionInput) > 512000) {
-          throw new OrderError(400, 'INVALID_SESSION', 'Session 无效或已过期，请重新获取。');
-        }
+        if (!string(session.accessToken, 65536)) throw new OrderError(400, 'SESSION_MISSING_TOKEN', 'Session 缺少有效的登录令牌（accessToken），请重新登录并复制完整登录信息。');
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new OrderError(400, 'SESSION_INVALID_ACCOUNT', 'Session 缺少有效的账号邮箱，请复制完整登录信息。');
+        if (!Number.isFinite(expiry)) throw new OrderError(400, 'SESSION_INVALID_EXPIRY', 'Session 缺少有效的到期时间，请重新获取完整登录信息。');
+        if (expiry <= Date.now()) throw new OrderError(400, 'SESSION_EXPIRED', 'ChatGPT Session 已过期，请重新登录 ChatGPT 后获取最新登录信息。');
         const policy = await getPolicy();
         if (input.consent !== true || input.termsVersion !== policy.terms || input.privacyVersion !== policy.privacy) {
           throw new OrderError(409, 'REDEMPTION_POLICY', '请重新读取并确认兑换条款。');
@@ -167,7 +183,7 @@ export function redemptionRepository(db: DatabaseSync, fetcher = fetch) {
           assertCanRedeem(order);
           const result = await request('/v2/redemptions/' + encodeURIComponent(prepared.id) + '/session', {
             method: 'PUT', headers: { 'X-Redemption-Token': prepared.token }, body: JSON.stringify({ sessionInput }),
-          });
+          }, [row.code, prepared.token]);
           const redemption = record(result.redemption);
           if (redemption.state !== 'SESSION_READY') throw new OrderError(409, 'REDEMPTION_SESSION', '兑换服务未确认账号信息。');
           const details = record(redemption.session);
@@ -181,6 +197,11 @@ export function redemptionRepository(db: DatabaseSync, fetcher = fetch) {
           db.prepare('UPDATE order_redemptions SET prepared = ?, account = ? WHERE order_id = ? AND preview_until = ?')
             .run(JSON.stringify({ ...prepared, expiresAt, policy }), JSON.stringify(account), order.id, lease);
           db.prepare('UPDATE order_fulfillment_details SET recharge_email=? WHERE order_id=?').run(account.email,order.id);
+        } catch (error) {
+          if (error instanceof OrderError && ['REDEMPTION_EXPIRED', 'REDEMPTION_NOT_FOUND'].includes(error.code)) {
+            db.prepare('UPDATE order_redemptions SET prepared=NULL, account=NULL WHERE order_id=? AND submitted=0').run(order.id);
+          }
+          throw error;
         } finally {
           db.prepare('UPDATE order_redemptions SET preview_until = 0 WHERE order_id = ? AND preview_until = ?').run(order.id, lease);
         }
@@ -205,7 +226,7 @@ export function redemptionRepository(db: DatabaseSync, fetcher = fetch) {
           const response = await request('/v2/redemptions/' + encodeURIComponent(prepared.id) + '/submit', {
             method: 'POST', headers: { 'X-Redemption-Token': prepared.token, 'Idempotency-Key': row.submit_key },
             body: JSON.stringify({ termsVersion: prepared.policy.terms, privacyVersion: prepared.policy.privacy }),
-          });
+          }, [row.code, prepared.token]);
           const submittedOrderNo = string(record(response.order).orderNo);
           if (submittedOrderNo) db.prepare('UPDATE order_redemptions SET submitted_order_no = COALESCE(submitted_order_no,?) WHERE order_id = ?').run(submittedOrderNo,order.id);
           saveResult(order, response);
@@ -249,7 +270,7 @@ export function redemptionRepository(db: DatabaseSync, fetcher = fetch) {
         const query = result?.orderNo && row.claim_token
           ? { path: '/v2/status/by-order', input: { orderNo: result.orderNo, claimToken: row.claim_token } }
           : { path: '/v2/status/by-voucher', input: { voucherCode: row.code } };
-        const response = await request(query.path, { method: 'POST', body: JSON.stringify(query.input) });
+        const response = await request(query.path, { method: 'POST', body: JSON.stringify(query.input) }, [row.code, row.claim_token || '']);
         saveResult(order, response);
         return view(order);
       }, true);

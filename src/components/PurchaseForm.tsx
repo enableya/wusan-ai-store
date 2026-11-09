@@ -18,13 +18,17 @@ export function PurchaseSummary({ product, environment }: { product: Product; en
   </>;
 }
 
-export function PurchaseForm({ product, onCreated }: { product: Product; onCreated?: (order: Order) => void }) {
+export type CouponQuote = { code: string; discountCents: number; originalCents: number; payableCents: number };
+
+export function PurchaseForm({ product, onCreated, onQuoteChange }: {
+  product: Product; onCreated?: (order: Order) => void; onQuoteChange?: (quote: CouponQuote | null) => void;
+}) {
   const payment = useApiResource<PaymentConfig>('/payments/config');
   const navigate = useNavigate();
   const [contact, setContact] = useState('');
   const [password, setPassword] = useState('');
   const [couponInput, setCouponInput] = useState('');
-  const [coupon, setCoupon] = useState<{ code: string; discountCents: number; payableCents: number } | null>(null);
+  const [coupon, setCoupon] = useState<CouponQuote | null>(null);
   const [couponBusy, setCouponBusy] = useState(false);
   const couponRequest = useRef(0);
   const quotedInput = useRef('');
@@ -39,6 +43,7 @@ export function PurchaseForm({ product, onCreated }: { product: Product; onCreat
   const sandboxPreview = !onCreated && sandbox;
   const canPay = payment.data?.enabled === true;
   const change = () => { key.current = crypto.randomUUID(); };
+  useEffect(() => { onQuoteChange?.(coupon); }, [coupon, onQuoteChange]);
   useEffect(() => {
     couponRequest.current++; quotedInput.current = '';
     setCouponInput(''); setCoupon(null); setCouponBusy(false);
@@ -51,7 +56,7 @@ export function PurchaseForm({ product, onCreated }: { product: Product; onCreat
     const request = ++couponRequest.current;
     setCouponBusy(true);
     try {
-      const result = await postApi<{ code: string; discountCents: number; payableCents: number }>('/coupons/quote', { code, productId: product.id });
+      const result = await postApi<CouponQuote>('/coupons/quote', { code, productId: product.id });
       if (request !== couponRequest.current) return;
       quotedInput.current = code;
       setCoupon(result); change(); $message.success('优惠券已应用。');
@@ -93,7 +98,7 @@ export function PurchaseForm({ product, onCreated }: { product: Product; onCreat
       <input id="query-password" name="queryPassword" type="password" placeholder="设置 6–14 位查询密码" autoComplete="new-password" minLength={6} maxLength={14} value={password} disabled={busy} aria-invalid={!!errors.password} aria-describedby="password-hint" onChange={event => { setPassword(event.target.value); change(); setErrors(value => ({ ...value, password: '' })); }} />
       <p className="field-hint" id="password-hint">用于找回订单，请妥善保存，无需填写账号或支付密码。</p>
     </div>
-    <div className="purchase-field coupon-entry"><label htmlFor="coupon-code">优惠码（选填）</label><div className="coupon-entry-row"><input id="coupon-code" value={couponInput} maxLength={40} disabled={busy} placeholder="输入优惠码，离开输入框后自动应用" aria-busy={couponBusy} onBlur={() => void applyCoupon()} onChange={event => { couponRequest.current++; quotedInput.current = ''; setCouponBusy(false); setCouponInput(event.target.value); setCoupon(null); change(); }} /></div>{coupon && <p className="coupon-entry-note">已优惠 ¥{money(coupon.discountCents)}，应付 ¥{money(coupon.payableCents)}</p>}</div>
+    <div className="purchase-field coupon-entry"><label htmlFor="coupon-code">优惠码（选填）</label><div className="coupon-entry-row"><input id="coupon-code" value={couponInput} maxLength={40} disabled={busy} placeholder="输入优惠码" aria-busy={couponBusy} onBlur={() => void applyCoupon()} onChange={event => { couponRequest.current++; quotedInput.current = ''; setCouponBusy(false); setCouponInput(event.target.value); setCoupon(null); change(); }} /></div>{coupon && <p className="coupon-entry-note">已优惠 ¥{money(coupon.discountCents)}，应付 ¥{money(coupon.payableCents)}</p>}</div>
     {!onCreated && <PurchaseSummary product={product} environment={payment.data?.environment} />}
     <button className="button primary full-width buy-now" type="submit" disabled={busy || couponBusy || !selectable || (!canPay && !sandboxPreview)}>{busy ? '正在创建订单…' : onCreated ? '继续付款' : '立即购买'}<Icon name="arrow-right" /></button>
     {!selectable ? <p className="field-hint payment-availability">商品暂未开放购买。</p> : !canPay && <p className="field-hint payment-availability">{payment.error ? null : payment.loading ? '正在确认支付状态…' : sandbox ? payment.data?.message : '支付宝收款暂未开放。'}{payment.error && <button type="button" className="text-button" onClick={payment.reload}>重试</button>}</p>}

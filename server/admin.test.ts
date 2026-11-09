@@ -410,6 +410,23 @@ test('order fulfillment details keep recharge email and protect voucher codes wi
   assert.equal(limited.canViewVoucherCodes,false);assert.equal(limited.orders[0].voucherCode,null);assert.equal(limited.orders[0].rechargeEmail,email);
   assert.equal(JSON.stringify(limited).includes(code),false);
   assert.equal(JSON.stringify(report).includes('contact-not-recharge'),false);
+  db.prepare(`INSERT INTO order_redemptions(order_id,voucher_id,submit_key,submitted,prepared,claim_token)
+    VALUES (?,?,?,1,?,?)`).run(id,voucher.lastInsertRowid,'private-submit-key',JSON.stringify({token:'private-prepared-token'}),'private-claim-token');
+  for (const result of [
+    {state:'QUEUED',settlement:'UNKNOWN',renewal:''},
+    {state:'FULFILLED',settlement:'UNKNOWN',renewal:''},
+    {state:'FULFILLED',settlement:'PAID',renewal:''},
+    {state:'NO_CHARGE',settlement:'NO_CHARGE',renewal:''},
+    {state:'',settlement:'UNKNOWN',renewal:'ready'},
+    {state:'',settlement:'PAID',renewal:'paid'},
+    {state:'FUTURE_STATE',settlement:'UNKNOWN',renewal:''},
+  ]) {
+    db.prepare('UPDATE order_redemptions SET result=? WHERE order_id=?').run(JSON.stringify(result),id);
+    const updated=(await request(path,undefined,viewer.cookie)).json.data as unknown as import('../src/types/admin.ts').AdminOrderList;
+    assert.deepEqual(updated.orders[0].recharge,{submitted:true,...result});
+    for(const secret of [code,'private-submit-key','private-prepared-token','private-claim-token']) assert.equal(JSON.stringify(updated).includes(secret),false);
+    assert.equal(updated.orders[0].voucherCode,null);
+  }
   db.prepare("UPDATE admin_accounts SET permissions='[\"orders.view\",\"vouchers.codes\"]' WHERE username='order-details-viewer'").run();
   const granted=(await request(path,undefined,viewer.cookie)).json.data as unknown as import('../src/types/admin.ts').AdminOrderList;
   assert.equal(granted.orders[0].voucherCode,code);

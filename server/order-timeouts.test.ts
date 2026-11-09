@@ -236,9 +236,36 @@ test('a customer can cancel an unsubmitted paid order before its deadline, but r
   assert.equal(f.orders.owned(id,'owner').cancelAction,null);
   assert.equal(f.db.prepare('SELECT source FROM order_cancellations WHERE order_id=?').get(id)!.source,'customer_paid');
   assert.equal(f.counts().refundCalls,0);assert.equal(f.inventory.listCards('chatgpt-plus',0).cards.length,0);
+  await assert.rejects(refundRepository(f.db,f.gateway).request(id,'manual-bypass','130.00','绕过审核'), { code: 'REFUND_APPROVAL_REQUIRED' });
+  const restarted=orderTimeoutService(f.db,f.gateway,f.redemptions,()=>f.paidAt);
+  await restarted.run();
+  assert.equal(f.counts().refundCalls,0);
+  assert.equal(f.db.prepare('SELECT count(*) n FROM payment_refunds WHERE order_id=?').get(id)!.n,0);
+  const reviews=adminOrderRepository(f.db,'sandbox').list(new URLSearchParams('refundReview=pending'),false,true,'refunds');
+  assert.equal(reviews.total,1);assert.equal(reviews.orders[0].id,id);
   await f.service.review(id,true,'reviewer','未充值，同意取消');
   assert.equal(f.orders.owned(id,'owner').cancellation?.state,'cancelled');
   assert.equal(f.counts().refundCalls,1);assert.equal(f.inventory.listCards('chatgpt-plus',0).cards.length,1);
+  await restarted.review(id,true,'duplicate-reviewer','重复审批');
+  assert.equal(f.counts().refundCalls,1);
+  assert.equal(f.db.prepare('SELECT reviewed_by FROM order_refund_reviews WHERE order_id=?').get(id)!.reviewed_by,'reviewer');
+});
+
+test('rejecting a customer paid cancellation prevents refunds and keeps the voucher reserved', async t => {
+  const f=setup(t);const id=f.add();f.reserve(id);
+  await f.service.requestCancellation(()=>f.orders.cancellationEligible(id,'owner'));
+  await assert.rejects(f.service.review(id,false,'reviewer',''),{code:'INVALID_REFUND_REVIEW'});
+  await f.service.review(id,false,'reviewer','需补充订单情况，暂不退款');
+  assert.equal(f.orders.owned(id,'owner').cancellation?.state,'refund_rejected');
+  await assert.rejects(refundRepository(f.db,f.gateway).request(id,'reject-bypass','130.00','绕过驳回'),{code:'REFUND_APPROVAL_REQUIRED'});
+  await assert.rejects(f.service.review(id,true,'other-reviewer','改为同意'),{code:'REFUND_REVIEW_CHANGED'});
+  f.advance(60*60000);await f.service.run();
+  assert.equal(f.counts().refundCalls,0);
+  assert.equal(f.db.prepare('SELECT count(*) n FROM payment_refunds WHERE order_id=?').get(id)!.n,0);
+  assert.equal(f.inventory.listCards('chatgpt-plus',0).cards.length,0);
+  const review=f.db.prepare('SELECT status,reviewed_by,reason FROM order_refund_reviews WHERE order_id=?').get(id)!;
+  assert.equal(review.status,'rejected');assert.equal(review.reviewed_by,'reviewer');
+  assert.equal(review.reason,'需补充订单情况，暂不退款');
 });
 
 test('submitted, processing, fulfilled, exempt and actively validating orders cannot request customer cancellation',async t=>{

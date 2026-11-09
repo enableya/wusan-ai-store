@@ -1,9 +1,11 @@
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status = 0) {
+  code?: string;
+  constructor(message: string, status = 0, code?: string) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -12,7 +14,7 @@ export async function requestApi<T>(path: string, signal?: AbortSignal, init: Re
   let body;
   try { body = await response.json(); }
   catch { throw new ApiError('接口返回内容异常，请稍后重试。', response.status); }
-  if (!response.ok) throw new ApiError(body?.error?.message || '服务暂不可用，请稍后重试。', response.status);
+  if (!response.ok) throw new ApiError(body?.error?.message || '服务暂不可用，请稍后重试。', response.status, typeof body?.error?.code === 'string' ? body.error.code : undefined);
   if (!body || typeof body !== 'object' || !('data' in body)) throw new ApiError('接口返回内容异常，请稍后重试。');
   return body.data as T;
 }

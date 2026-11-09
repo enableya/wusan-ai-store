@@ -7,6 +7,7 @@ import { formatDate, money } from '../lib/format';
 import { orderPaymentTypes, orderRefundReviewStatuses } from '../types/admin';
 import type { AdminOrderList } from '../types/admin';
 import { orderStatus } from '../types/orders';
+import { orderRechargeTag } from '../lib/redemption-status';
 import { AdminTable } from './AdminTable';
 import { DateField } from './DateField';
 import { SelectField } from './SelectField';
@@ -48,7 +49,7 @@ export function AdminOrders({ onExpired }: { onExpired: () => void }) {
   }
   const page = data?.page ?? filters.page;
   return <>
-    <div className="admin-heading"><div><div className="eyebrow">ORDER MANAGEMENT</div><h1>订单管理</h1><p>查看最新订单与付款情况，支持组合筛选。</p></div>
+    <div className="admin-heading"><div><div className="eyebrow">ORDER MANAGEMENT</div><h1>订单管理</h1><p>查看订单、付款与充值状态，支持组合筛选。</p></div>
       <button type="button" className="button secondary" onClick={reload} disabled={loading}><Icon name="refresh-cw" />刷新订单</button>
     </div>
     <form className="order-filters" onSubmit={apply}>
@@ -77,13 +78,14 @@ export function AdminOrders({ onExpired }: { onExpired: () => void }) {
       <section className="admin-panel order-list" aria-busy={loading}>
         <div className="admin-panel-title"><div><h2 id="order-list-title">订单列表</h2><p>按下单时间倒序 · 待付款包含尚未关闭的过期订单</p></div><span className="admin-chip">{data.environment === 'production' ? '正式数据' : '测试数据'}</span></div>
         <AdminTable className="order-table" labelledBy="order-list-title" emptyState={!data.orders.length && <p>暂无符合筛选条件的订单，可调整条件或重置筛选。</p>}>
-          <thead><tr>{['订单号', '商品 / 分类', '付费类别', '卡密', '充值邮箱', '订单状态', '订单金额', '累计退款', '退款审核', '下单时间', '付款时间', '支付宝交易号'].map(label => <th key={label} scope="col">{label}</th>)}</tr></thead>
+          <thead><tr>{['订单号', '商品 / 分类', '付费类别', '卡密', '充值邮箱', '充值状态', '订单状态', '订单金额', '累计退款', '退款审核', '下单时间', '付款时间', '支付宝交易号'].map(label => <th key={label} scope="col">{label}</th>)}</tr></thead>
           <tbody>{data.orders.map(order => <tr key={order.id}>
             <td className="order-id">{order.id}</td>
             <td><strong>{order.productName}</strong><small>{categoryName(order.category)}</small></td>
             <td><span className={`admin-chip ${order.paymentType === 'free' ? 'inactive' : ''}`}>{orderPaymentTypes[order.paymentType]}</span></td>
             <td className="order-voucher-cell">{!data.canViewVoucherCodes ? <span className="admin-table-secondary">无查看权限</span> : order.voucherCode ? <><code>{order.voucherCode}</code><button type="button" className="text-button" onClick={() => void copyVoucher(order.voucherCode!)} aria-label={`复制订单 ${order.id} 的卡密`}>复制卡密</button></> : <span className="admin-table-secondary">未分配 / 未记录</span>}</td>
             <td className="order-email-cell">{order.rechargeEmail || (order.status === 'pending' ? '尚未验证' : '未记录')}</td>
+            <td className="order-recharge-cell"><span className="order-status" data-tone={orderRechargeTag(order).tone}>{orderRechargeTag(order).label}</span></td>
             <td><span className={`order-status ${order.status}`}>{orderStatus[order.status]}</span>{order.cancellationMessage && <small>{order.cancellationMessage}</small>}{order.status === 'pending' && Date.parse(order.expiresAt) <= Date.now() && <small>付款时间已过，待核实</small>}</td>
             <td className="admin-table-number">¥{money(order.priceCents)}</td><td className="admin-table-number">¥{money(order.refundedCents)}</td>
             <td className="order-refund-cell">{order.refundReview ? <>

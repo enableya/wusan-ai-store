@@ -23,6 +23,12 @@ export default function PaymentPage() {
   const [updated, setUpdated] = useState<Order | null>(null);
   const [busy, setBusy] = useState<'pay' | 'query' | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [redeeming, setRedeeming] = useState(false);
+  const [redemptionSubmitted, setRedemptionSubmitted] = useState(false);
+  const onRedemptionSubmitted = useCallback(() => {
+    setRedemptionSubmitted(true);
+    window.dispatchEvent(new Event('wusan:orders-updated'));
+  }, []);
   const $message = useMessage();
   const queryFailed = useRef(false);
   const [now, setNow] = useState(Date.now());
@@ -45,7 +51,7 @@ export default function PaymentPage() {
     } finally { lock.current = false; if (!signal?.aborted) setBusy(null); }
   }, [orderRef, $message]);
   useEffect(() => {
-    setUpdated(null); queryFailed.current = false; setBusy(null);
+    setUpdated(null); queryFailed.current = false; setBusy(null); setRedemptionSubmitted(false);
   }, [orderRef, $message]);
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -117,11 +123,13 @@ export default function PaymentPage() {
       {order.environment === 'sandbox' && order.status === 'pending' && <p className="field-hint">请使用支付宝沙箱版和沙箱买家账号付款。</p>}
       {order.status === 'pending' && <button className="button secondary full-width spaced-button" type="button" disabled={!!busy || cancelling || !config.data?.enabled} onClick={() => void refresh()}>{busy === 'query' ? '正在查询…' : '我已付款，查询结果'}</button>}
       {order.cancellation && <Notice>{order.cancellation.message}</Notice>}
-      {order.status === 'paid' && !order.cancellation && <AccountRedemption key={order.id} orderId={order.id} productName={order.productName} />}
-      <CancelOrderButton order={order} className="button secondary full-width spaced-button" disabled={!!busy} onBusyChange={value => { setCancelling(value); lock.current = value; }} onChanged={next => { setUpdated(next); window.dispatchEvent(new Event('wusan:orders-updated')); }} />
+      {order.status === 'paid' && !order.cancellation && <AccountRedemption key={order.id} orderId={order.id} productName={order.productName} onResult={onRedemptionSubmitted} onBusyChange={setRedeeming} />}
+      <CancelOrderButton order={redemptionSubmitted ? { ...order, cancelAction: null } : order} className="button secondary full-width spaced-button" disabled={!!busy || redeeming} onBusyChange={value => { setCancelling(value); lock.current = value; }} onChanged={next => { setUpdated(next); window.dispatchEvent(new Event('wusan:orders-updated')); }} />
       {(order.status === 'closed' || order.status === 'cancelled') && <Link className="button primary full-width" to={`/products/${order.productId}`}>重新选择并下单</Link>}
-      <SupportButton className="text-button spaced-button">联系支持 <Icon name="arrow-up-right" /></SupportButton>
-      <Link className="text-button spaced-button" to="/orders"><Icon name="arrow-left" />返回我的订单</Link>
+      <div className="order-detail-actions">
+        <SupportButton className="button secondary"><Icon name="headphones" />联系支持</SupportButton>
+        <Link className="button secondary" to="/orders"><Icon name="arrow-left" />返回我的订单</Link>
+      </div>
     </aside></div>
   </div>;
 }

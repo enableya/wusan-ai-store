@@ -1,3 +1,5 @@
+import type { Order } from './orders.ts';
+
 export const adminPermissions = {
   'coupons.manage': '管理优惠券',
   'orders.view': '查看订单管理',
@@ -56,6 +58,7 @@ export type AdminOrderList = {
   orders: {
     id: string; productId: string; productName: string; category: string; voucherCode: string | null; rechargeEmail: string | null;
     status: 'pending' | 'paid' | 'closed' | 'cancelled'; cancellationMessage: string; priceCents: number;
+    recharge?: Order['recharge']; cancellation?: Order['cancellation'];
     createdAt: string; paidAt: string | null; expiresAt: string;
     tradeNo: string | null; staffCheckout: boolean; paymentType: OrderPaymentType; refundedCents: number;
     refundReview: OrderRefundReview | null;

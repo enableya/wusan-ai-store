@@ -16,7 +16,11 @@ export function CancelOrderButton({ order, onChanged, onBusyChange, disabled = f
   const locked = useRef(false);
   const action = !order.staffCheckout && !order.cancellation && ((order.status === 'pending' && order.cancelAction === 'cancel')
     || (order.status === 'paid' && order.cancelAction === 'request_refund')) ? order.cancelAction : null;
-  if (!action) return null;
+  if (!action) return order.cancelUnavailableReason && !order.staffCheckout && !order.cancellation
+    && (order.status === 'pending' || order.status === 'paid') ? <span className="order-cancel-unavailable">
+      <button type="button" className={className} disabled>取消订单</button>
+      <span className="field-hint">{order.cancelUnavailableReason}</span>
+    </span> : null;
   const paid = action === 'request_refund';
   async function cancel() {
     if (locked.current || disabled) return;

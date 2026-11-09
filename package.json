@@ -27,7 +27,9 @@
     "test": "node scripts/run.mjs node_modules/vitest/vitest.mjs run",
     "test:e2e": "node scripts/run.mjs node_modules/@playwright/test/cli.js test",
     "test:admin:e2e": "node scripts/run.mjs scripts/test-admin.mjs",
-    "payment": "node scripts/run.mjs server/payment-cli.ts"
+    "payment": "node scripts/run.mjs server/payment-cli.ts",
+    "dev:orders:mock": "node scripts/run.mjs scripts/dev-orders-mock.mjs",
+    "test:orders": "node scripts/run.mjs scripts/test-orders.mjs"
   },
   "dependencies": {
     "@daypicker/react": "^10.0.2",

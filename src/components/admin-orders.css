@@ -28,6 +28,12 @@
 .order-voucher-cell code { display: block; font-size: 12px; line-height: 1.6; }
 .order-voucher-cell .text-button { display: block; margin-top: 6px; font-size: 12px; }
 .order-table .order-refund-cell { min-width: 200px; max-width: 300px; white-space: normal; overflow-wrap: anywhere; }
+.order-table .order-recharge-cell { min-width: 170px; max-width: 240px; white-space: normal; }
+.order-recharge-cell .order-status { line-height: 1.6; }
+.order-recharge-cell [data-tone='success'] { color: light-dark(#20643c, #a0e2b8); background: light-dark(#eaf8ef, #223e2e); }
+.order-recharge-cell [data-tone='progress'] { color: var(--mint-text); background: var(--mint); }
+.order-recharge-cell [data-tone='attention'] { color: light-dark(#805514, #ffda91); background: light-dark(#fff5df, #3e3422); }
+.order-recharge-cell [data-tone='failure'] { color: var(--danger); background: var(--rose-soft); }
 .order-refund-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; }
 .order-refund-form { display: grid; gap: 16px; }
 .order-refund-form dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px 16px; margin: 0; }
