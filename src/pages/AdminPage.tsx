@@ -120,7 +120,7 @@ function Dashboard({ account, onExpired }: { account: AdminAccess; onExpired: ()
         {currentModule?.id === 'refunds' && <AdminRefundReviews onExpired={onExpired} />}
         {currentModule?.id === 'coupons' && <AdminCoupons onExpired={onExpired} />}
         {currentModule?.id === 'revenue' && <RevenueReport onExpired={onExpired} />}
-        {currentModule?.id === 'referrals' && <><div className="admin-heading"><div><h1>邀请返利</h1><p>查看邀请归属、订单和返利状态；付款成功后每单记录 5 元，提现需审核通过后打款。</p></div></div>{hasAdminPermission(account, 'withdrawals.manage') && <Withdrawals admin onExpired={onExpired} />}<ReferralReport admin onExpired={onExpired} /></>}
+        {currentModule?.id === 'referrals' && <><div className="admin-heading"><div><h1>邀请返利</h1><p>查看邀请归属、订单和返利状态；付款成功后每单记录 5 元，提现需审核通过后人工打款。</p></div></div>{hasAdminPermission(account, 'withdrawals.manage') && <Withdrawals admin operator={account.username} onExpired={onExpired} />}<ReferralReport admin onExpired={onExpired} /></>}
         {currentModule?.id === 'users' && <AdminUsers username={account.username} onExpired={onExpired} />}
         {currentModule?.id === 'vouchers' && <AdminVouchers onExpired={onExpired} canImport={hasAdminPermission(account, 'vouchers.import')}
           canViewCodes={hasAdminPermission(account, 'vouchers.codes')} canDelete={hasAdminPermission(account, 'vouchers.delete')} />}

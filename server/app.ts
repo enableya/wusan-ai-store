@@ -112,9 +112,9 @@ export function createApiServer(db: DatabaseSync, gateway: PaymentGateway = crea
         return send(200, { data: analytics.record(request, response, input, /bot|spider|crawler/i.test(request.headers['user-agent'] || '')) });
       }
       if (url.pathname.startsWith('/api/admin/')) {
-        const writeInput = async () => {
+        const writeInput = async (limit?: number) => {
           if (request.headers.origin !== (admin.origin || `http://${request.headers.host}`)) throw new OrderError(403, 'INVALID_ORIGIN', '请从本站管理页面操作。');
-          return readJson(request, admin.origin);
+          return readJson(request, admin.origin, limit);
         };
         if (url.pathname === '/api/admin/session' && reading) return send(200, { data: admin.session(request) });
         if (url.pathname === '/api/admin/staff-checkout' && (reading || request.method === 'POST')) {
@@ -152,13 +152,26 @@ export function createApiServer(db: DatabaseSync, gateway: PaymentGateway = crea
           admin.requirePermission(request, 'withdrawals.manage');
           return send(200, { data: withdrawals.list(url.searchParams) });
         }
-        const withdrawalAction = /^\/api\/admin\/referrals\/withdrawals\/(WD[a-f0-9]{32})\/(approve|reject|pay|query)$/.exec(url.pathname);
+        const withdrawalReceipt = /^\/api\/admin\/referrals\/withdrawals\/(WD[a-f0-9]{32})\/receipt$/.exec(url.pathname);
+        if (withdrawalReceipt && reading) {
+          admin.requirePermission(request, 'withdrawals.manage');
+          const receipt = withdrawals.receipt(withdrawalReceipt[1]);
+          response.setHeader('Content-Type', receipt.type);
+          response.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+          response.setHeader('Content-Disposition', `inline; filename="${withdrawalReceipt[1]}.${receipt.type === 'image/png' ? 'png' : 'jpg'}"`);
+          response.writeHead(200);
+          return response.end(request.method === 'HEAD' ? undefined : receipt.bytes);
+        }
+        const withdrawalAction = /^\/api\/admin\/referrals\/withdrawals\/(WD[a-f0-9]{32})\/(approve|reject|pay|query|manual-start|manual-complete|manual-release)$/.exec(url.pathname);
         if (withdrawalAction && request.method === 'POST') {
           admin.requirePermission(request, 'withdrawals.manage');
-          const input = await writeInput();
+          const input = await writeInput(withdrawalAction[2] === 'manual-complete' ? 720000 : undefined);
           const actor = admin.requirePermission(request, 'withdrawals.manage');
           rateLimit(`withdrawal-review:${actor.username}`, 60);
           const [,id,action] = withdrawalAction;
+          if (action === 'manual-start') return send(200, { data: withdrawals.manualStart(id, actor.username) });
+          if (action === 'manual-complete') return send(200, { data: withdrawals.manualComplete(id, actor.username, input) });
+          if (action === 'manual-release') return send(200, { data: withdrawals.manualRelease(id, actor.username, input) });
           return send(200, { data: action === 'approve' || action === 'reject'
             ? withdrawals.review(id, action === 'approve', actor.username, input.reason)
             : await withdrawals.pay(id, actor.username, action === 'query') });
@@ -316,11 +329,11 @@ export function createApiServer(db: DatabaseSync, gateway: PaymentGateway = crea
         if (request.method === 'POST' && (action === 'preview' || action === 'submit' || action === 'refresh')) {
           if (request.headers.origin !== (gateway.origin || `http://${request.headers.host}`)) return fail(403, 'INVALID_ORIGIN', '请从本站页面发起请求。');
           rateLimit(`redemption:${action}:${id}`, action === 'refresh' ? 20 : 8);
-          const input = await readJson(request, gateway.origin, action === 'preview' ? 1024000 : undefined);
+          const input = await readJson(request, gateway.origin, action === 'preview' || (action === 'submit' && order.staffCheckout) ? 1024000 : undefined);
           // Recheck authorization after reading the request body.
           if (order.staffCheckout) orders.owned(id, null, staffOwner());
           const data = action === 'preview' ? await redemptions.preview(order, input)
-            : action === 'submit' ? await redemptions.submit(order, input.confirmationId) : await redemptions.refresh(order);
+            : action === 'submit' ? await redemptions.submit(order, input.confirmationId, input.sessionInput) : await redemptions.refresh(order);
           return send(200, { data });
         }
         return fail(405, 'METHOD_NOT_ALLOWED', '请求方式无效。');

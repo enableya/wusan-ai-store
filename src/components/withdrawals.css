@@ -1,4 +1,4 @@
-.withdrawals { margin-block: 24px; padding: 24px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); min-width: 0; }
+.withdrawals { margin-block: 24px; padding-block: 24px; border-block: 1px solid var(--line); min-width: 0; }
 .withdrawal-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
 .withdrawal-heading h2 { margin: 0; font-size: 22px; }
 .withdrawal-heading p, .withdrawal-environment { color: var(--muted); font-size: 13px; line-height: 1.7; }
@@ -32,5 +32,21 @@
 .withdrawal-review { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 12px; margin: 0; font-size: 14px; }
 .withdrawal-review dt { color: var(--muted); }
 .withdrawal-review dd { margin: 0; overflow-wrap: anywhere; }
-.withdrawal-error { color: var(--danger); font-size: 13px; line-height: 1.7; }
-@media(max-width:760px) { .withdrawals { padding: 16px; } .withdrawal-heading { align-items: start; flex-direction: column; } .withdrawal-balances { grid-template-columns: 1fr; gap: 8px; } .withdrawal-balances > div { display: flex; align-items: center; justify-content: space-between; padding: 12px; } .withdrawal-balances strong { font-size: 23px; } }
+.withdrawal-copy-value { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.withdrawal-copy-value > span { min-width: 0; overflow-wrap: anywhere; }
+.withdrawal-copy { flex: 0 0 28px; width: 28px; height: 28px; }
+.withdrawal-row-actions .text-button { display: inline-flex; align-items: center; gap: 5px; }
+.withdrawal-form input { min-width: 0; max-width: 100%; }
+.withdrawal-form input[type="file"] { font-size: 12px; padding: 10px 8px; }
+.withdrawal-settlement-dialog { width: min(600px, calc(100% - 32px)); }
+.withdrawal-settlement-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 14px; }
+.withdrawal-settlement-fields label { display: grid; gap: 7px; min-width: 0; font-size: 14px; }
+.withdrawal-field-wide { grid-column: 1 / -1; }
+.withdrawal-settlement-dialog .withdrawal-actions { position: sticky; bottom: -25px; z-index: 1; padding-block: 14px; margin-top: 0; background: var(--surface); border-top: 1px solid var(--line); }
+.withdrawal-receipt-preview { display: block; width: 100%; height: 128px; object-fit: contain; background: var(--soft); border: 1px solid var(--line); }
+.withdrawal-receipt-image { display: block; width: 100%; height: auto; }
+.withdrawal-receipt-meta { font-size: 13px; overflow-wrap: anywhere; }
+.withdrawal-form .withdrawal-warning { color: var(--danger); }
+.withdrawal-error, .withdrawal-form .withdrawal-error { color: var(--danger); font-size: 13px; line-height: 1.7; }
+@media(max-width:760px) { .withdrawals { padding-block: 16px; } .withdrawal-heading { align-items: start; flex-direction: column; } .withdrawal-balances { grid-template-columns: 1fr; gap: 8px; } .withdrawal-balances > div { display: flex; align-items: center; justify-content: space-between; padding: 12px; } .withdrawal-balances strong { font-size: 23px; } .withdrawal-actions { gap: 8px; } .withdrawal-actions .button { padding-inline: 12px; } }
+@media(max-width:520px) { .withdrawal-settlement-fields { grid-template-columns: minmax(0, 1fr); } .withdrawal-settlement-dialog .withdrawal-actions { bottom: -22px; } }

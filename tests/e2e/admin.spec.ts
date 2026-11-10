@@ -320,9 +320,31 @@ test('linked super admin can start account redemption directly with sandbox paym
   await page.getByRole('button', { name: '绑定商城账号' }).click();
   await expect(page.getByRole('button', { name: '解除绑定' })).toBeVisible();
 
-  // Render the existing connection form without sending requests to a fulfillment provider.
-  await page.route('**/api/orders/*/redemption', route => route.fulfill({ json: { data: { enabled: true, submitted: false } } }));
+  // Exercise deferred confirmation without sending requests to a fulfillment provider.
+  const sessionInput = JSON.stringify({ user: { email: 'staff-e2e@example.invalid' }, accessToken: 'private-e2e-staff-token', expires: new Date(Date.now() + 600000).toISOString() });
+  const redemption = {
+    enabled: true, submitted: false, requiresSession: true,
+    account: null as null | { email: string; plan: string; validation: string; confirmationId: string },
+    rechargeEmail: null as string | null,
+    result: null as null | { orderNo: string; state: string; settlement: string; progress: number; renewal: string },
+  };
+  let previews = 0, submissions = 0;
+  await page.route('**/api/orders/*/redemption', route => route.fulfill({ json: { data: redemption } }));
   await page.route('**/api/orders/*/redemption/policy', route => route.fulfill({ json: { data: { terms: 'test', privacy: 'test' } } }));
+  await page.route('**/api/orders/*/redemption/preview', route => {
+    expect(route.request().postDataJSON().sessionInput).toBe(sessionInput);
+    redemption.account = { email: 'staff-e2e@example.invalid', plan: '', validation: 'identified', confirmationId: `staff-preview-${++previews}` };
+    return route.fulfill({ json: { data: redemption } });
+  });
+  await page.route('**/api/orders/*/redemption/submit', route => {
+    expect(route.request().postDataJSON()).toEqual({ confirmationId: redemption.account!.confirmationId, sessionInput });
+    submissions++;
+    redemption.submitted = true;
+    redemption.account = null;
+    redemption.rechargeEmail = 'staff-e2e@example.invalid';
+    redemption.result = { orderNo: 'E2E-STAFF-1', state: 'FULFILLED', settlement: 'PAID', progress: 100, renewal: 'paid' };
+    return route.fulfill({ json: { data: redemption } });
+  });
   await page.goto('/');
   const plusCard = page.locator('.storefront-card').filter({ has: page.getByRole('heading', { name: 'ChatGPT Plus', exact: true }) });
   await expect(plusCard.locator('.card-price')).toHaveText('¥0.00免付开通');
@@ -342,7 +364,37 @@ test('linked super admin can start account redemption directly with sandbox paym
   await expect(dialog.getByText('确认付款', { exact: true })).toHaveCount(0);
   await expect(dialog.getByLabel('联系方式')).toHaveCount(0);
   expect(order.priceCents).toBe(0);
+  await dialog.getByLabel('ChatGPT Session').fill(sessionInput);
+  await dialog.getByRole('button', { name: '验证账号并继续' }).click();
+  await expect(dialog.getByRole('heading', { name: '账号信息已识别' })).toBeVisible();
+  await expect(dialog.getByText('可以开通', { exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: '确认并提交充值' })).toBeDisabled();
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)).toBe(false);
+    await page.screenshot({ path: test.info().outputPath(`staff-confirmation-${width}.png`), fullPage: true });
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await dialog.getByRole('button', { name: '更换账号' }).click();
+  await expect(dialog.getByLabel('ChatGPT Session')).toHaveValue('');
+  await dialog.getByLabel('ChatGPT Session').fill(sessionInput);
+  await dialog.getByRole('button', { name: '验证账号并继续' }).click();
+  await expect(dialog.getByRole('heading', { name: '账号信息已识别' })).toBeVisible();
+  expect(submissions).toBe(0);
+  expect(await page.evaluate(() => JSON.stringify([Object.entries(localStorage), Object.entries(sessionStorage)]))).not.toContain('private-e2e-staff-token');
   await dialog.getByRole('button', { name: '关闭购买弹窗' }).click();
+  await page.goto(`/orders/${order.id}`);
+  // A reopened page must request the Session again, never restore credentials from storage.
+  await expect(page.getByLabel('ChatGPT Session')).toBeVisible();
+  await expect(page.getByRole('button', { name: '确认并提交充值' })).toHaveCount(0);
+  await page.getByLabel('ChatGPT Session').fill(sessionInput);
+  await page.getByRole('button', { name: '验证账号并继续' }).click();
+  await page.getByLabel('我已确认以上账号，将为此账号充值').check();
+  await page.getByRole('button', { name: '确认并提交充值' }).click();
+  await expect(page.getByRole('heading', { name: '开通结果' })).toBeVisible();
+  await expect(page.locator('.redemption-result-email')).toContainText('staff-e2e@example.invalid');
+  expect(previews).toBe(3);
+  expect(submissions).toBe(1);
   await page.getByRole('button', { name: '退出登录' }).click();
   await expect(page.getByRole('button', { name: '登录', exact: true })).toBeVisible();
   expect((await page.request.get(`/api/orders/${order.id}`)).status()).toBe(404);
@@ -512,12 +564,23 @@ test('rebate withdrawals reserve the balance, require admin approval and release
   await row.getByRole('button',{name:'同意提现'}).click();
   await page.getByRole('dialog',{name:'同意提现'}).getByRole('button',{name:'同意提现'}).click();
   await expect(row).toContainText('审核通过 · 待打款');
-  await expect(row.getByRole('button',{name:'打款至支付宝'})).toBeDisabled();
+  await expect(row.getByRole('button',{name:'领取人工打款'})).toBeEnabled();
   for (const width of [1440,390]) {
     await page.setViewportSize({width,height:1000});
     expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1)).toBe(false);
     await page.screenshot({path:`artifacts/withdrawal-admin-${width}.png`,fullPage:true});
   }
+  await row.getByRole('button',{name:'领取人工打款'}).click();
+  await page.getByRole('dialog',{name:'领取人工打款'}).getByRole('button',{name:'领取人工打款'}).click();
+  await expect(row).toContainText('人工打款处理中');
+  await expect(row.getByRole('button',{name:'驳回',exact:true})).toHaveCount(0);
+  await row.getByRole('button',{name:'退回待打款'}).click();
+  const release=page.getByRole('dialog',{name:'退回待打款'});
+  await expect(release.getByRole('button',{name:'退回待打款'})).toBeDisabled();
+  await release.getByLabel('退回原因').fill('已核实尚未转账，退回核对收款信息');
+  await release.getByRole('checkbox').check();
+  await release.getByRole('button',{name:'退回待打款'}).click();
+  await expect(row).toContainText('审核通过 · 待打款');
   await row.getByRole('button',{name:'驳回',exact:true}).click();
   const reject = page.getByRole('dialog',{name:'驳回申请'});
   await reject.getByLabel('驳回原因').fill('请核对收款账号后重新申请');
@@ -526,6 +589,96 @@ test('rebate withdrawals reserve the balance, require admin approval and release
   await page.goto('/referrals');
   await expect(page.locator('.withdrawal-balances').getByText('¥10',{exact:true})).toBeVisible();
   await expect(page.locator('.withdrawal-table tbody')).toContainText('请核对收款账号后重新申请');
+});
+
+test('manual payout records verified evidence without enabling Alipay transfers and settles the customer balance', async ({ page }) => {
+  const errors: string[]=[];
+  page.on('pageerror',error=>errors.push(error.message));
+  const db=openDatabase(process.env.E2E_ADMIN_DB!);
+  const now=new Date().toISOString(),userId='manual-payout-e2e',id='WD'+randomBytes(16).toString('hex');
+  db.prepare('INSERT INTO customers VALUES (?,?,?,?,?)').run(userId,userId,await hashAdminPassword('manual-e2e-password'),'e123456789abcdef',now);
+  db.prepare(`INSERT INTO orders(id,owner_hash,email,snapshot,status,created_at,expires_at,idempotency_key,fingerprint,environment)
+    VALUES ('manual-e2e-order','manual-buyer','',?,'pending',?,?,'manual-e2e-key','fixture','sandbox')`)
+    .run(JSON.stringify({productId:'chatgpt-plus',productName:'ChatGPT Plus',priceCents:13000}),now,now);
+  db.prepare("INSERT INTO referral_orders(order_id,inviter_id,created_at) VALUES ('manual-e2e-order',?,?)").run(userId,now);
+  db.prepare("UPDATE orders SET status='paid',paid_at=? WHERE id='manual-e2e-order'").run(now);
+  db.prepare(`INSERT INTO referral_withdrawals(id,customer_id,environment,amount_cents,payee_account,payee_name,status,idempotency_key,created_at,payout_method)
+    VALUES (?,?,'sandbox',500,'manual@example.com','人工提现测试用户','pending','manual-e2e-request',?,'manual')`).run(id,userId,now);
+  const customerToken=randomBytes(32).toString('hex'),adminToken=randomBytes(32).toString('hex');
+  db.prepare('INSERT INTO customer_sessions VALUES (?,?,?)').run(createHash('sha256').update(customerToken).digest('hex'),userId,Date.now()+3600000);
+  db.prepare('INSERT INTO admin_sessions VALUES (?,?,?)').run(createHash('sha256').update(adminToken).digest('hex'),'admin',new Date(Date.now()+3600000).toISOString());
+  db.close();
+  await page.context().addCookies([{name:'wusan_customer',value:customerToken,url:'http://127.0.0.1:5210',httpOnly:true,sameSite:'Lax'},{name:'wusan_admin',value:adminToken,url:'http://127.0.0.1:5210',httpOnly:true,sameSite:'Strict'}]);
+  await page.setViewportSize({width:1440,height:1000});
+  await page.goto('/admin?tab=referrals');
+  const row=page.locator('.withdrawal-table tbody tr').filter({hasText:id});
+  await row.getByRole('button',{name:'同意提现',exact:true}).click();
+  await page.getByRole('dialog',{name:'同意提现'}).getByRole('button',{name:'同意提现',exact:true}).click();
+  await row.getByRole('button',{name:'领取人工打款'}).click();
+  await page.getByRole('dialog',{name:'领取人工打款'}).getByRole('button',{name:'领取人工打款'}).click();
+  await expect(row).toContainText('人工打款处理中');
+  expect((await (await page.request.get('/api/admin/referrals/withdrawals')).json()).data.payoutEnabled).toBe(false);
+  await row.getByRole('button',{name:'登记已打款'}).click();
+  const form=page.getByRole('dialog',{name:'登记已打款'});
+  await expect(form.getByRole('button',{name:'登记已打款'})).toBeDisabled();
+  await form.getByLabel('支付宝交易号',{exact:true}).fill('202611090000000000000099');
+  await form.getByLabel('实际转账金额（元）').fill('4.99');
+  const localTime=await page.evaluate(()=>{
+    const d=new Date();
+    return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,19);
+  });
+  await form.getByLabel('转账时间',{exact:true}).fill(localTime);
+  const proof=await page.evaluate(()=>{
+    const canvas=document.createElement('canvas');canvas.width=520;canvas.height=620;
+    const c=canvas.getContext('2d')!;c.fillStyle='#ffffff';c.fillRect(0,0,520,620);
+    c.fillStyle='#147a50';c.font='bold 28px sans-serif';c.fillText('TEST RECEIPT - SANDBOX',32,64);
+    c.fillStyle='#172b26';c.font='bold 52px sans-serif';c.fillText('CNY 5.00',32,170);
+    c.font='20px sans-serif';c.fillText('manual@example.com',32,250);
+    c.fillText('202611090000000000000099',32,300);c.fillText('Fixture only - no money sent',32,400);
+    return canvas.toDataURL('image/png').split(',')[1];
+  });
+  await form.getByLabel('转账成功凭证', {exact:false}).setInputFiles({name:'sandbox-receipt.png',mimeType:'image/png',buffer:Buffer.from(proof,'base64')});
+  await expect(form.getByAltText('待登记的转账凭证')).toBeVisible();
+  await form.getByRole('checkbox').check();
+  await form.getByRole('button',{name:'登记已打款'}).click();
+  await expect(form.getByRole('alert')).toContainText('转账金额或时间与提现申请不符');
+  await expect(form.getByLabel('支付宝交易号',{exact:true})).toHaveValue('202611090000000000000099');
+  await form.getByLabel('实际转账金额（元）').fill('5.00');
+  await expect(page.locator('.app-message--success')).toHaveCount(0);
+  for(const width of [1440,390]) {
+    await page.setViewportSize({width,height:1000});
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1)).toBe(false);
+    expect(await form.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
+    await expect(form.getByRole('button',{name:'登记已打款'})).toBeInViewport();
+    await page.screenshot({path:`artifacts/manual-payout-form-${width}.png`,fullPage:true});
+  }
+  await form.getByRole('button',{name:'登记已打款'}).click();
+  await expect(form).toHaveCount(0);
+  await expect(row).toContainText('已到账');
+  await expect(row.getByRole('button',{name:'登记已打款'})).toHaveCount(0);
+  await row.getByRole('button',{name:'查看凭证'}).click();
+  const receiptDialog=page.getByRole('dialog',{name:'人工打款凭证'});
+  const image=receiptDialog.getByAltText('已登记的转账成功凭证');
+  await expect(image).toBeVisible();
+  await expect.poll(()=>image.evaluate((el:HTMLImageElement)=>el.naturalWidth)).toBe(520);
+  await page.screenshot({path:'artifacts/manual-payout-receipt-390.png',fullPage:true});
+  await receiptDialog.getByRole('button',{name:'关闭弹窗'}).click();
+  await page.goto('/referrals');
+  await expect(page.locator('.withdrawal-table tbody')).toContainText('人工核实打款');
+  await expect(page.locator('.withdrawal-balances > div').nth(0).locator('strong')).toHaveText('¥0');
+  await expect(page.locator('.withdrawal-balances > div').nth(1).locator('strong')).toHaveText('¥0');
+  await expect(page.locator('.withdrawal-balances > div').nth(2).locator('strong')).toHaveText('¥5');
+  await expect(page.getByRole('button',{name:'查看凭证'})).toHaveCount(0);
+  for(const width of [1440,390]) {
+    await page.setViewportSize({width,height:1000});
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1)).toBe(false);
+    await page.screenshot({path:`artifacts/manual-payout-customer-${width}.png`,fullPage:true});
+  }
+  const check=openDatabase(process.env.E2E_ADMIN_DB!);
+  expect(check.prepare("SELECT count(*) n FROM referral_withdrawal_events WHERE withdrawal_id=? AND action='manual-complete'").get(id)!.n).toBe(1);
+  expect(check.prepare("SELECT recorded_by FROM referral_manual_payouts WHERE withdrawal_id=?").get(id)!.recorded_by).toBe('admin');
+  check.close();
+  expect(errors).toEqual([]);
 });
 
 test('a refunded timeout order is shown as canceled in the customer account and admin filters', async ({ page }) => {

@@ -1,6 +1,6 @@
 # 邀请返利提现
 
-2026-11-08 已发布到生产。提现申请和后台审核已上线，真实转账开关继续关闭。资金状态使用独立测试库和模拟支付宝网关验证，未发起真实转账。
+2026-11-09 本地改为人工打款流程，尚未发布。以下新流程须随本次版本发布后才会在线上生效。2026-11-08 上线版本仍为提现申请、后台审核及默认关闭的接口转账。
 
 ## 操作流程
 
@@ -9,34 +9,38 @@
 后台「邀请返利」新增「提现审核与打款」。超级管理员可见；普通管理员需要 `withdrawals.manage`（审核提现与打款）权限，该权限自动包含 `referrals.view`。仅有查看返利权限的管理员不能读取支付宝收款信息或审核提现。
 
 1. **待审核**：可同意或驳回；驳回必须填写原因，金额释放。
-2. **审核通过 · 待打款**：后台核对金额、支付宝账号和实名姓名后点击「打款至支付宝」，二次确认后发起转账；打款前也可驳回。
-3. **打款处理中**：通过原提现单号查询结果，不得新建转账或重复打款；超时、网络错误、验签失败、返回字段不匹配均保持冻结。
-4. **已到账**：只有支付宝验签且原单号、返回金额（如提供）及转账单号核对通过、状态为 `SUCCESS` 才记为已到账。
-5. **打款失败**：支付宝明确返回原单 `FAIL` 或 `REFUND` 后释放金额，用户可重新申请并接受审核。接口未受理或结果未知时不会假定失败，需查询原单；持续无法核实的单据应使用原商户后台核对，不提供手工伪造成功入口。
+2. **审核通过 · 待打款**：点击「领取人工打款」登记经办人，余额仍冻结，网站不发起转账。领取前可驳回。
+3. **人工打款处理中**：经办人在支付宝中核对账号、实名姓名及金额并手动完成转账。仅领取人能登记完成或退回，其他管理员不能再次领取。结果未知时保持冻结，不得重复转账。
+4. **登记已打款**：经办人核实支付宝显示成功后，填写实际交易号（16–64 位数字）、实际金额、转账时间，上传不超过 512 KB 的 PNG/JPG 成功凭证，并勾选核实确认。金额必须一致，时间不得早于申请或晚于当前时间，交易号不能被其他提现单使用。完成后显示「已到账 · 人工核实打款」。这是管理员凭证登记，不是支付宝接口自动验真。
+5. **退回待打款**：仅在未转账或已明确失败时，由经办人填写原因并确认无成功转账后退回，金额仍冻结。之后可重新领取或驳回；处理中不能直接驳回，结果未知不得退回，不会因超时自动解锁。
 
-后台每次审核、打款发起、未知结果及确认结果均写入独立审计流水，保留操作人和时间。收款人及金额在申请后不能直接修改，要先驳回再重新申请。用户仅能读取自己的记录，后台列表支持状态过滤和分页。测试和正式环境余额及提现单互相隔离。
+凭证存储在服务端数据库，通过受保护的后台图片接口读取，不放在静态目录，仅提现管理员可查看。用户可查看自己的金额、交易号、时间及人工核实状态，但不能读取后台凭证和经办记录。重复提交同一登记不重复扣款，完成记录不可覆盖修改。
 
-余额 = 有效入账返利 − 审核/打款中冻结金额 − 已到账金额。退款导致返利失效后，可提现余额按实际重新计算；若无法覆盖已申请金额，审批与发起打款将被阻止。已在途或已到账的转账不因退款而重复发起或自动追回，对应差额保留为待核对余额，阻止后续透支。
+后台每次审核、人工领取、退回、完成登记及历史接口核对均写入审计流水，保留操作人和时间。收款人和金额在申请后不可修改，需先驳回再申请。测试和正式环境互相隔离。
 
-## 支付宝配置
+余额 = 有效返利 − 冻结金额 − 已到账金额。退款造成余额不足时，审批和领取被阻止。领取后实际转账前应刷新核对余额及退款情况。若转账已成功，之后返利失效不应阻止如实登记，对应差额继续作为待核对余额，阻止后续透支。
 
-提现调用 `alipay.fund.trans.uni.transfer`，使用 `TRANS_ACCOUNT_NO_PWD` / `DIRECT_TRANSFER`；查单调用 `alipay.fund.trans.common.query`。提现单号直接作为不可变的 `out_biz_no`，不因重试或查单生成新号。转账使用 SDK 的响应验签。首次打款记录应用及商户标识，商户配置变化后拒绝用新商户查询旧单。
+若经办人账号被删除或无法登录，应先核对支付宝原始记录，再由受信任的服务器维护人员处理归属；不能为重新领取而直接清除处理中状态。
 
-现有网页收款配置不代表已经开通支付宝单笔转账权限。实际启用前，需在商户侧开通对应产品并配置适用的已申报转账场景。配置均保留在服务器受保护目录，不写入前端：
+## 历史接口打款
 
-- `ALIPAY_TRANSFER_ENABLED=false`：独立转账开关，默认关闭；关闭时仍可申请及审核。
-- `ALIPAY_TRANSFER_SCENE_NAME`：商户已申报场景。
-- `ALIPAY_TRANSFER_SCENE_REPORT_INFOS`：已申报场景要求的信息 JSON 数组，元素为 `info_type`、`info_content`。启用时必须有效且非空。
-- 如果应用要求证书模式，完整填写 `ALIPAY_TRANSFER_APP_CERT_PATH`、`ALIPAY_TRANSFER_ROOT_CERT_PATH`、`ALIPAY_TRANSFER_PUBLIC_CERT_PATH`。转账单独使用证书 SDK，不改变原有网页支付 SDK。
-- 应用、商户、私钥及环境沿用对应支付环境配置。必须先配置该环境的支付宝，再单独启用转账。不得在本地使用正式收款配置进行真实转账测试。
+人工流程不依赖单笔转账产品或 `ALIPAY_TRANSFER_ENABLED`。新申请为 `manual` 模式，旧发起接口打款请求一律拒绝，即使网关已启用也不会新发起接口转账。
 
-支付宝官方 SDK 文档：[单笔转账](https://github.com/alipay/alipay-sdk-java-all/blob/master/v3/docs/AlipayFundTransUniApi.md)、[转账查询](https://github.com/alipay/alipay-sdk-java-all/blob/master/v3/docs/AlipayFundTransCommonApi.md)。
+历史 `processing` 且为 `api` 的记录仅保留 `alipay.fund.trans.common.query` 原单查询，不允许转为人工打款，避免重复转账。查询继续按原商户、原单号、金额及 SDK 响应验签核对；未知结果保持冻结，明确成功或失败后才结算或释放。
+
+历史查询仍依赖原环境的应用、商户及受保护密钥配置。网关开关默认 `ALIPAY_TRANSFER_ENABLED=false`；历史接口在途单需要查单时，使用原商户有效场景 `ALIPAY_TRANSFER_SCENE_NAME`、`ALIPAY_TRANSFER_SCENE_REPORT_INFOS`，证书模式时同时提供 `ALIPAY_TRANSFER_APP_CERT_PATH`、`ALIPAY_TRANSFER_ROOT_CERT_PATH`、`ALIPAY_TRANSFER_PUBLIC_CERT_PATH`。不得在本地使用生产配置进行转账测试。
 
 ## 接口和数据迁移
 
 - `GET /api/referrals/withdrawals`：登录用户自己的余额及记录。
 - `POST /api/referrals/withdrawals`：提交申请，要求 `Idempotency-Key` 以及 `amount`（元字符串）、`account`、`realName`、`password`。
 - `GET /api/admin/referrals/withdrawals`：后台列表。
-- `POST /api/admin/referrals/withdrawals/:id/approve|reject|pay|query`：同意、驳回、打款、查单；驳回需要 `reason`。
+- `POST /api/admin/referrals/withdrawals/:id/approve|reject|query`：同意、驳回及历史接口查单，驳回需要 `reason`；旧 `pay` 接口已停用。
+- `POST /api/admin/referrals/withdrawals/:id/manual-start`：领取人工打款，不转账。
+- `POST /api/admin/referrals/withdrawals/:id/manual-complete`：`transferNo`、`paidAt`（UTC ISO 时间）、`amount`（元字符串）、`receipt`（PNG/JPG base64 data URL）、`confirmed:true`。仅该接口的请求上限放宽至 720000 字节。
+- `POST /api/admin/referrals/withdrawals/:id/manual-release`：`reason`、`confirmed:true`，确认没有成功转账后退回。
+- `GET|HEAD /api/admin/referrals/withdrawals/:id/receipt`：仅提现管理员可读，禁止缓存，凭证不暴露为静态文件。
 
-SQLite schema 15 增加 `referral_withdrawals` 和 `referral_withdrawal_events`，原订单及返利记录保留。发布前先备份数据库，再在副本验证迁移。回退需使用兼容 schema 15 的版本，或核对迁移后新增数据再恢复适当备份，不能直接用 schema 14 的旧服务读取新库。
+SQLite schema 20 新增 `payout_method`（历史默认 `api`）及 `referral_manual_payouts`，保存经办、登记信息和凭证。原记录不变，备份需包含凭证表。发布前备份并在副本验证迁移；旧 schema 19 服务不能直接打开 schema 20 库。生产产生新数据后不得直接覆盖旧快照丢弃新增业务，须保全数据并使用兼容版本回退。
+
+本机原生 esbuild 被文件保护拦截时，先执行 `npm run build`，再设置 `E2E_PREVIEW=true` 运行 `npm run test:admin:e2e`，浏览器回归使用同一隔离数据库和本地端口检查构建产物。

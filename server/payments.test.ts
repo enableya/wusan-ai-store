@@ -122,6 +122,67 @@ test('staff checkout requires both accounts for binding and only the linked cust
   assert.equal((await request('/api/orders/staff-checkout', payload, { cookie: customerCookie })).response.status, 403);
 });
 
+test('staff redemption API defers inventory and accepts the original Session only at final confirmation', async t => {
+  const original = process.env.LOVECODEX_ENABLED;
+  process.env.LOVECODEX_ENABLED = 'true';
+  t.after(() => {
+    if (original === undefined) delete process.env.LOVECODEX_ENABLED;
+    else process.env.LOVECODEX_ENABLED = original;
+  });
+  const expires = new Date(Date.now() + 600000).toISOString();
+  const sessionInput = JSON.stringify({ user: { email: 'staff-api@example.invalid' }, accessToken: 'private-api-token-' + 'x'.repeat(40000), expires });
+  const networkFetch = globalThis.fetch;
+  let prepares = 0, submissions = 0;
+  t.mock.method(globalThis, 'fetch', async (url: Parameters<typeof fetch>[0], options?: RequestInit) => {
+    const target = new URL(String(url));
+    if (target.hostname !== 'lovecodex.cn') return networkFetch(url, options);
+    const success = (data: Record<string, unknown>) => Response.json({ ok: true, ...data });
+    if (target.pathname.endsWith('/bootstrap')) return success({ policyVersions: { terms: '1', privacy: '2' } });
+    if (target.pathname.endsWith('/prepare')) {
+      prepares++;
+      assert.equal(JSON.parse(String(options?.body)).voucherCode, 'STAFF-API-CARD');
+      return success({ redemptionId: 'staff-api', redemptionToken: 'private-api-redemption', expiresAt: expires, product: { id: 'chatgpt-plus' } });
+    }
+    if (target.pathname.endsWith('/session')) {
+      assert.equal(JSON.parse(String(options?.body)).sessionInput, sessionInput);
+      return success({ redemption: { state: 'SESSION_READY', session: { accountDisplay: 'staff-api@example.invalid' } } });
+    }
+    assert.ok(target.pathname.endsWith('/submit'));
+    submissions++;
+    return success({ order: { orderNo: 'API-STAFF-1', orderState: 'QUEUED' } });
+  });
+  const { db, request } = await setup(t, false, false);
+  const registration = await request('/api/customer/register', { username: 'linzhenglian', password: 'staff-api-test-password' });
+  const cookie = registration.response.headers.getSetCookie().find(value => value.startsWith('wusan_customer='))!.split(';')[0];
+  db.prepare("INSERT INTO admin_accounts(username,password_hash,created_at,role) VALUES ('linzhenglian','unused',?,'super_admin')").run(new Date().toISOString());
+  db.prepare(`INSERT INTO customer_staff_checkout(customer_id,admin_username,linked_at)
+    SELECT id,'linzhenglian',? FROM customers WHERE username='linzhenglian'`).run(new Date().toISOString());
+  const created = await request('/api/orders/staff-checkout', { productId: 'chatgpt-plus' }, { cookie });
+  assert.equal(created.response.status, 201);
+  const order = created.body.data;
+  const path = `/api/orders/${order.id}/redemption`;
+  db.prepare("INSERT INTO voucher_inventory(product_id,environment,code,priority) VALUES ('chatgpt-plus','sandbox','STAFF-API-CARD',1)").run();
+  const preview = await request<{ account: { confirmationId: string }; requiresSession: boolean }>(path + '/preview',
+    { sessionInput, consent: true, termsVersion: '1', privacyVersion: '2' }, { cookie });
+  assert.equal(preview.response.status, 200);
+  assert.equal(preview.body.data.requiresSession, true);
+  assert.equal(prepares, 0);
+  assert.equal(db.prepare('SELECT count(*) n FROM order_redemptions').get()!.n, 0);
+  const body = { confirmationId: preview.body.data.account.confirmationId, sessionInput };
+  assert.equal((await request(path + '/submit', body, { cookie: '' })).response.status, 404);
+  assert.equal((await request(path + '/submit', body, { cookie, origin: 'https://untrusted.invalid' })).response.status, 403);
+  const submitted = await request<{ submitted: boolean; rechargeEmail: string }>(path + '/submit', body, { cookie });
+  assert.equal(submitted.response.status, 200);
+  assert.equal(submitted.body.data.submitted, true);
+  assert.equal(submitted.body.data.rechargeEmail, 'staff-api@example.invalid');
+  await request(path + '/submit', body, { cookie });
+  assert.equal(prepares, 1);
+  assert.equal(submissions, 1);
+  assert.doesNotMatch(JSON.stringify(db.prepare('SELECT * FROM order_redemptions').all()), /private-api-token|accessToken/);
+  db.prepare('DELETE FROM customer_staff_checkout').run();
+  assert.equal((await request(path + '/submit', body, { cookie })).response.status, 404);
+});
+
 test('closed public checkout permits authenticated acceptance tests and still processes signed notifications', async t => {
   const { request, db, notify } = await setup(t, true, false);
   const status = await request<PaymentConfig>('/api/payments/config');

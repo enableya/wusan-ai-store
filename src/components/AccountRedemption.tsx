@@ -48,9 +48,11 @@ export function AccountRedemption({ orderId, productName, onResult, onBusyChange
   const [progressPaused, setProgressPaused] = useState(false);
   const $message = useMessage();
   const input = useRef<HTMLTextAreaElement>(null);
+  const session = useRef<{ orderId: string; confirmationId: string; value: string } | null>(null);
   const lock = useRef(false);
   const view = updated ?? resource.data;
-  const account = editing ? null : view?.account;
+  const account = editing || (view?.requiresSession && (session.current?.orderId !== orderId
+    || session.current.confirmationId !== view.account?.confirmationId)) ? null : view?.account;
   const policy = useApiResource<RedemptionPolicy>(view?.enabled && !view.submitted && !account ? path + '/policy' : null);
   const policyData = policy.data;
   const result = view?.result ?? null;
@@ -111,6 +113,11 @@ export function AccountRedemption({ orderId, productName, onResult, onBusyChange
     if (action === 'preview') { setValidationError(null); setValidationCode(undefined); setConfirmed(false); }
     try {
       const next = await postApi<RedemptionView>(path + '/' + action, body, undefined, AbortSignal.timeout(90000));
+      if (action === 'preview' && next.account) {
+        session.current = next.requiresSession && typeof body.sessionInput === 'string'
+          ? { orderId, confirmationId: next.account.confirmationId, value: body.sessionInput } : null;
+      }
+      if (next.submitted) session.current = null;
       if (action === 'preview' && next.account && input.current) input.current.value = '';
       setUpdated(next); setEditing(false);
     } catch (cause) {
@@ -172,8 +179,8 @@ export function AccountRedemption({ orderId, productName, onResult, onBusyChange
       </div>
       <label className="redemption-account-check"><input type="checkbox" checked={confirmed} disabled={busy} onChange={event => setConfirmed(event.target.checked)} /><span>我已确认以上账号，将为此账号充值</span></label>
       <div className="redemption-account-actions">
-        <button type="button" className="button primary" disabled={busy || !confirmed} onClick={() => void send('submit', { confirmationId: account.confirmationId })}>确认并提交充值<Icon name="arrow-right" /></button>
-        <button type="button" className="button secondary" disabled={busy} onClick={() => { setEditing(true); setConfirmed(false); setValidationError(null); }}>更换账号</button>
+        <button type="button" className="button primary" disabled={busy || !confirmed} onClick={() => void send('submit', { confirmationId: account.confirmationId, ...(view.requiresSession ? { sessionInput: session.current?.value } : {}) })}>确认并提交充值<Icon name="arrow-right" /></button>
+        <button type="button" className="button secondary" disabled={busy} onClick={() => { session.current = null; setEditing(true); setConfirmed(false); setValidationError(null); }}>更换账号</button>
       </div>
     </div> : <form onSubmit={preview}>
       <ol className="redemption-account-guide" aria-label="连接账号步骤">

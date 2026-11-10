@@ -11,6 +11,6 @@ export default defineConfig({
   use: { baseURL: 'http://127.0.0.1:5210', channel: 'chrome', headless: true },
   webServer: [
     { command: `"${process.execPath}" server/index.ts`, url: 'http://127.0.0.1:5212/api/health', reuseExistingServer: false, env },
-    { command: `"${process.execPath}" node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5210 --strictPort`, url: 'http://127.0.0.1:5210', reuseExistingServer: false, env },
+    { command: `"${process.execPath}" node_modules/vite/bin/vite.js ${process.env.E2E_PREVIEW === 'true' ? 'preview' : ''} --host 127.0.0.1 --port 5210 --strictPort`, url: 'http://127.0.0.1:5210', reuseExistingServer: false, env },
   ],
 });

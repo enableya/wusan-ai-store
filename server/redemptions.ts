@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Order } from '../src/types/orders.ts';
 import type { RedemptionAccount, RedemptionPolicy, RedemptionResult, RedemptionView } from '../src/types/redemption.ts';
@@ -13,6 +13,7 @@ const string = (value: unknown, limit = 256) =>
 const parse = <T>(value: string | null): T | null => value ? JSON.parse(value) as T : null;
 
 type Prepared = { id: string; token: string; expiresAt: string; policy: RedemptionPolicy };
+type StaffPreview = { account: string; session_hash: string; policy: string; expires_at: string; lease_until: number };
 type Row = {
   code: string;
   submit_key: string;
@@ -34,14 +35,20 @@ export function redemptionRepository(db: DatabaseSync, fetcher = fetch) {
     LEFT JOIN order_fulfillment_details f ON f.order_id = r.order_id WHERE r.order_id = ?
   `);
   const rowFor = (id: string) => lookup.get(id) as unknown as Row | undefined;
+  const staffPreview = (order: Order) => order.staffCheckout
+    ? db.prepare('SELECT * FROM staff_redemption_previews WHERE order_id = ?').get(order.id) as unknown as StaffPreview | undefined
+    : undefined;
   const available = () => process.env.LOVECODEX_ENABLED === 'true';
   const view = (order: Order): RedemptionView => {
     const row = rowFor(order.id);
     const prepared = parse<Prepared>(row?.prepared ?? null);
+    const deferred = !row?.submitted ? staffPreview(order) : undefined;
     return {
       enabled: available(), submitted: !!row?.submitted,
+      ...(deferred ? { requiresSession: true } : {}),
       rechargeEmail: row?.recharge_email || null,
-      account: prepared && Date.parse(prepared.expiresAt) > Date.now() && !row?.submitted
+      account: deferred ? (Date.parse(deferred.expires_at) > Date.now() ? parse<RedemptionAccount>(deferred.account) : null)
+        : prepared && Date.parse(prepared.expiresAt) > Date.now() && !row?.submitted
         ? parse<RedemptionAccount>(row?.account ?? null) : null,
       result: parse<RedemptionResult>(row?.result ?? null),
     };
@@ -133,107 +140,161 @@ export function redemptionRepository(db: DatabaseSync, fetcher = fetch) {
     return policy;
   }
 
+  function readSession(input: unknown) {
+    const sessionInput = string(input, 512000);
+    if (typeof input === 'string' && Buffer.byteLength(input) > 512000) {
+      throw new OrderError(400, 'SESSION_TOO_LARGE', '登录信息过大，请确认复制的是完整 Session JSON，而不是网页内容。');
+    }
+    let session: Record<string, unknown>;
+    try { session = record(JSON.parse(sessionInput)); }
+    catch { throw new OrderError(400, 'SESSION_INVALID_JSON', 'Session JSON 格式不正确或复制不完整，请重新复制页面全部内容。'); }
+    const email = string(record(session.user).email);
+    const expiry = Date.parse(string(session.expires));
+    if (!string(session.accessToken, 65536)) throw new OrderError(400, 'SESSION_MISSING_TOKEN', 'Session 缺少有效的登录令牌（accessToken），请重新登录并复制完整登录信息。');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new OrderError(400, 'SESSION_INVALID_ACCOUNT', 'Session 缺少有效的账号邮箱，请复制完整登录信息。');
+    if (!Number.isFinite(expiry)) throw new OrderError(400, 'SESSION_INVALID_EXPIRY', 'Session 缺少有效的到期时间，请重新获取完整登录信息。');
+    if (expiry <= Date.now()) throw new OrderError(400, 'SESSION_EXPIRED', 'ChatGPT Session 已过期，请重新登录 ChatGPT 后获取最新登录信息。');
+    return { sessionInput, email, expiry };
+  }
+
+  async function previewAccount(order: Order, input: Record<string, unknown>, allocate = false) {
+    const { sessionInput, email, expiry } = readSession(input.sessionInput);
+    const policy = await getPolicy();
+    if (input.consent !== true || input.termsVersion !== policy.terms || input.privacyVersion !== policy.privacy) {
+      throw new OrderError(409, 'REDEMPTION_POLICY', '请重新读取并确认兑换条款。');
+    }
+    assertCanRedeem(order);
+    if (order.staffCheckout && !allocate) {
+      if (rowFor(order.id)?.submitted) return view(order);
+      const account: RedemptionAccount = { email, plan: '', validation: 'identified', confirmationId: randomUUID() };
+      const now = Date.now();
+      const stored = db.prepare(`INSERT INTO staff_redemption_previews(order_id,account,session_hash,policy,expires_at)
+        SELECT ?,?,?,?,?
+        WHERE NOT EXISTS (SELECT 1 FROM order_redemptions WHERE order_id=? AND (submitted=1 OR preview_until>?))
+        ON CONFLICT(order_id) DO UPDATE SET account=excluded.account,session_hash=excluded.session_hash,
+          policy=excluded.policy,expires_at=excluded.expires_at
+        WHERE staff_redemption_previews.lease_until<=?`).run(
+          order.id, JSON.stringify(account), createHash('sha256').update(sessionInput).digest('hex'),
+          JSON.stringify(policy), new Date(Math.min(expiry, now + 900000)).toISOString(), order.id, now, now);
+      if (!stored.changes) throw new OrderError(409, 'REDEMPTION_BUSY', '这笔订单正在处理，请稍后刷新。');
+      return view(order);
+    }
+    const row = reserve(order);
+    if (row.submitted) return view(order);
+    const now = Date.now();
+    const lease = now + 90000;
+    const locked = db.prepare(`UPDATE order_redemptions SET account = NULL, preview_until = ?
+      WHERE order_id = ? AND submitted = 0 AND preview_until <= ?
+      AND NOT EXISTS (SELECT 1 FROM order_cancellations c WHERE c.order_id = order_redemptions.order_id AND c.state != 'fulfilled')
+      AND NOT EXISTS (SELECT 1 FROM order_fulfillment_deadlines d WHERE d.order_id = order_redemptions.order_id AND d.due_at <= ?)
+      `).run(lease, order.id, now, new Date(now).toISOString());
+    if (!locked.changes) throw new OrderError(409, 'REDEMPTION_BUSY', '这笔订单正在处理，请稍后刷新。');
+    try {
+      let prepared = parse<Prepared>(row.prepared);
+      if (!prepared || Date.parse(prepared.expiresAt) <= Date.now()) {
+        const result = await request('/v2/redemptions/prepare', { method: 'POST', body: JSON.stringify({ voucherCode: row.code }) });
+        if (record(result.product).id !== order.productId) {
+          throw new OrderError(409, 'VOUCHER_PRODUCT_MISMATCH', '卡密对应的套餐与订单不一致，请联系客服。');
+        }
+        prepared = { id: string(result.redemptionId), token: string(result.redemptionToken, 4096), expiresAt: string(result.expiresAt), policy };
+        if (!prepared.id || !prepared.token || !(Date.parse(prepared.expiresAt) > Date.now())) {
+          throw new OrderError(502, 'REDEMPTION_PREPARE', '兑换服务未返回有效会话。');
+        }
+        db.prepare('UPDATE order_redemptions SET prepared = ? WHERE order_id = ?')
+          .run(JSON.stringify(prepared), order.id);
+      }
+      assertCanRedeem(order);
+      const result = await request('/v2/redemptions/' + encodeURIComponent(prepared.id) + '/session', {
+        method: 'PUT', headers: { 'X-Redemption-Token': prepared.token }, body: JSON.stringify({ sessionInput }),
+      }, [row.code, prepared.token]);
+      const redemption = record(result.redemption);
+      if (redemption.state !== 'SESSION_READY') throw new OrderError(409, 'REDEMPTION_SESSION', '兑换服务未确认账号信息。');
+      const details = record(redemption.session);
+      const reportedEmail = string(details.accountDisplay) || string(details.accountHint);
+      const account: RedemptionAccount = {
+        email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(reportedEmail) ? reportedEmail : email,
+        plan: string(details.planType, 64), validation: string(details.validation, 32), confirmationId: randomUUID(),
+      };
+      const expiresAt = string(redemption.expiresAt) || prepared.expiresAt;
+      if (!(Date.parse(expiresAt) > Date.now())) throw new OrderError(409, 'REDEMPTION_EXPIRED', '账号确认已过期，请重新验证。');
+      db.prepare('UPDATE order_redemptions SET prepared = ?, account = ? WHERE order_id = ? AND preview_until = ?')
+        .run(JSON.stringify({ ...prepared, expiresAt, policy }), JSON.stringify(account), order.id, lease);
+      db.prepare('UPDATE order_fulfillment_details SET recharge_email=? WHERE order_id=?').run(account.email,order.id);
+    } catch (error) {
+      if (error instanceof OrderError && ['REDEMPTION_EXPIRED', 'REDEMPTION_NOT_FOUND'].includes(error.code)) {
+        db.prepare('UPDATE order_redemptions SET prepared=NULL, account=NULL WHERE order_id=? AND submitted=0').run(order.id);
+      }
+      throw error;
+    } finally {
+      db.prepare('UPDATE order_redemptions SET preview_until = 0 WHERE order_id = ? AND preview_until = ?').run(order.id, lease);
+    }
+    return view(order);
+  }
+
+  async function submitPrepared(order: Order, confirmationId: unknown) {
+    const row = rowFor(order.id);
+    if (row?.submitted) return view(order);
+    const prepared = parse<Prepared>(row?.prepared ?? null);
+    const account = parse<RedemptionAccount>(row?.account ?? null);
+    if (!row || !prepared || !account || account.confirmationId !== confirmationId || !(Date.parse(prepared.expiresAt) > Date.now())) {
+      throw new OrderError(409, 'REDEMPTION_EXPIRED', '请先验证并确认当前账号。');
+    }
+    // Persist before the network call. An ambiguous response is reconciled by lookup.
+    const started = db.prepare(`UPDATE order_redemptions SET submitted = 1, account = NULL WHERE order_id = ? AND submitted = 0 AND account = ? AND preview_until <= ?
+      AND NOT EXISTS (SELECT 1 FROM order_cancellations c WHERE c.order_id = order_redemptions.order_id AND c.state != 'fulfilled')
+      AND NOT EXISTS (SELECT 1 FROM order_fulfillment_deadlines d WHERE d.order_id = order_redemptions.order_id AND d.due_at <= ?)`).run(order.id, row.account, Date.now(), new Date().toISOString());
+    if (!started.changes) throw new OrderError(409, 'REDEMPTION_BUSY', '账号确认信息已更新，请刷新后核对。');
+    db.prepare('DELETE FROM staff_redemption_previews WHERE order_id = ?').run(order.id);
+    try {
+      const response = await request('/v2/redemptions/' + encodeURIComponent(prepared.id) + '/submit', {
+        method: 'POST', headers: { 'X-Redemption-Token': prepared.token, 'Idempotency-Key': row.submit_key },
+        body: JSON.stringify({ termsVersion: prepared.policy.terms, privacyVersion: prepared.policy.privacy }),
+      }, [row.code, prepared.token]);
+      const submittedOrderNo = string(record(response.order).orderNo);
+      if (submittedOrderNo) db.prepare('UPDATE order_redemptions SET submitted_order_no = COALESCE(submitted_order_no,?) WHERE order_id = ?').run(submittedOrderNo,order.id);
+      saveResult(order, response);
+    } catch (error) {
+      if (!(error instanceof OrderError)) throw error;
+    }
+    return view(order);
+  }
+
   return {
     view,
     policy: getPolicy,
     preview(order: Order, input: Record<string, unknown>) {
-      return exclusive(order, async () => {
-        const sessionInput = string(input.sessionInput, 512000);
-        if (typeof input.sessionInput === 'string' && Buffer.byteLength(input.sessionInput) > 512000) {
-          throw new OrderError(400, 'SESSION_TOO_LARGE', '登录信息过大，请确认复制的是完整 Session JSON，而不是网页内容。');
-        }
-        let session: Record<string, unknown>;
-        try { session = record(JSON.parse(sessionInput)); }
-        catch { throw new OrderError(400, 'SESSION_INVALID_JSON', 'Session JSON 格式不正确或复制不完整，请重新复制页面全部内容。'); }
-        const email = string(record(session.user).email);
-        const expiry = Date.parse(string(session.expires));
-        if (!string(session.accessToken, 65536)) throw new OrderError(400, 'SESSION_MISSING_TOKEN', 'Session 缺少有效的登录令牌（accessToken），请重新登录并复制完整登录信息。');
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new OrderError(400, 'SESSION_INVALID_ACCOUNT', 'Session 缺少有效的账号邮箱，请复制完整登录信息。');
-        if (!Number.isFinite(expiry)) throw new OrderError(400, 'SESSION_INVALID_EXPIRY', 'Session 缺少有效的到期时间，请重新获取完整登录信息。');
-        if (expiry <= Date.now()) throw new OrderError(400, 'SESSION_EXPIRED', 'ChatGPT Session 已过期，请重新登录 ChatGPT 后获取最新登录信息。');
-        const policy = await getPolicy();
-        if (input.consent !== true || input.termsVersion !== policy.terms || input.privacyVersion !== policy.privacy) {
-          throw new OrderError(409, 'REDEMPTION_POLICY', '请重新读取并确认兑换条款。');
-        }
-        assertCanRedeem(order);
-        const row = reserve(order);
-        if (row.submitted) return view(order);
-        const now = Date.now();
-        const lease = now + 90000;
-        const locked = db.prepare(`UPDATE order_redemptions SET account = NULL, preview_until = ?
-          WHERE order_id = ? AND submitted = 0 AND preview_until <= ?
-          AND NOT EXISTS (SELECT 1 FROM order_cancellations c WHERE c.order_id = order_redemptions.order_id AND c.state != 'fulfilled')
-          AND NOT EXISTS (SELECT 1 FROM order_fulfillment_deadlines d WHERE d.order_id = order_redemptions.order_id AND d.due_at <= ?)
-          `).run(lease, order.id, now, new Date(now).toISOString());
-        if (!locked.changes) throw new OrderError(409, 'REDEMPTION_BUSY', '这笔订单正在处理，请稍后刷新。');
-        try {
-          let prepared = parse<Prepared>(row.prepared);
-          if (!prepared || Date.parse(prepared.expiresAt) <= Date.now()) {
-            const result = await request('/v2/redemptions/prepare', { method: 'POST', body: JSON.stringify({ voucherCode: row.code }) });
-            if (record(result.product).id !== order.productId) {
-              throw new OrderError(409, 'VOUCHER_PRODUCT_MISMATCH', '卡密对应的套餐与订单不一致，请联系客服。');
-            }
-            prepared = { id: string(result.redemptionId), token: string(result.redemptionToken, 4096), expiresAt: string(result.expiresAt), policy };
-            if (!prepared.id || !prepared.token || !(Date.parse(prepared.expiresAt) > Date.now())) {
-              throw new OrderError(502, 'REDEMPTION_PREPARE', '兑换服务未返回有效会话。');
-            }
-            db.prepare('UPDATE order_redemptions SET prepared = ? WHERE order_id = ?')
-              .run(JSON.stringify(prepared), order.id);
-          }
-          assertCanRedeem(order);
-          const result = await request('/v2/redemptions/' + encodeURIComponent(prepared.id) + '/session', {
-            method: 'PUT', headers: { 'X-Redemption-Token': prepared.token }, body: JSON.stringify({ sessionInput }),
-          }, [row.code, prepared.token]);
-          const redemption = record(result.redemption);
-          if (redemption.state !== 'SESSION_READY') throw new OrderError(409, 'REDEMPTION_SESSION', '兑换服务未确认账号信息。');
-          const details = record(redemption.session);
-          const reportedEmail = string(details.accountDisplay) || string(details.accountHint);
-          const account: RedemptionAccount = {
-            email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(reportedEmail) ? reportedEmail : email,
-            plan: string(details.planType, 64), validation: string(details.validation, 32), confirmationId: randomUUID(),
-          };
-          const expiresAt = string(redemption.expiresAt) || prepared.expiresAt;
-          if (!(Date.parse(expiresAt) > Date.now())) throw new OrderError(409, 'REDEMPTION_EXPIRED', '账号确认已过期，请重新验证。');
-          db.prepare('UPDATE order_redemptions SET prepared = ?, account = ? WHERE order_id = ? AND preview_until = ?')
-            .run(JSON.stringify({ ...prepared, expiresAt, policy }), JSON.stringify(account), order.id, lease);
-          db.prepare('UPDATE order_fulfillment_details SET recharge_email=? WHERE order_id=?').run(account.email,order.id);
-        } catch (error) {
-          if (error instanceof OrderError && ['REDEMPTION_EXPIRED', 'REDEMPTION_NOT_FOUND'].includes(error.code)) {
-            db.prepare('UPDATE order_redemptions SET prepared=NULL, account=NULL WHERE order_id=? AND submitted=0').run(order.id);
-          }
-          throw error;
-        } finally {
-          db.prepare('UPDATE order_redemptions SET preview_until = 0 WHERE order_id = ? AND preview_until = ?').run(order.id, lease);
-        }
-        return view(order);
-      });
+      return exclusive(order, () => previewAccount(order, input));
     },
-    submit(order: Order, confirmationId: unknown) {
+    submit(order: Order, confirmationId: unknown, sessionInput?: unknown) {
       return exclusive(order, async () => {
-        const row = rowFor(order.id);
-        if (row?.submitted) return view(order);
-        const prepared = parse<Prepared>(row?.prepared ?? null);
-        const account = parse<RedemptionAccount>(row?.account ?? null);
-        if (!row || !prepared || !account || account.confirmationId !== confirmationId || !(Date.parse(prepared.expiresAt) > Date.now())) {
+        if (rowFor(order.id)?.submitted) return view(order);
+        const deferred = staffPreview(order);
+        if (!deferred) return submitPrepared(order, confirmationId);
+        const account = parse<RedemptionAccount>(deferred.account)!;
+        if (account.confirmationId !== confirmationId || !(Date.parse(deferred.expires_at) > Date.now())) {
           throw new OrderError(409, 'REDEMPTION_EXPIRED', '请先验证并确认当前账号。');
         }
-        // Persist before the network call. An ambiguous response is reconciled by lookup.
-        const started = db.prepare(`UPDATE order_redemptions SET submitted = 1, account = NULL WHERE order_id = ? AND submitted = 0 AND account = ? AND preview_until <= ?
-          AND NOT EXISTS (SELECT 1 FROM order_cancellations c WHERE c.order_id = order_redemptions.order_id AND c.state != 'fulfilled')
-          AND NOT EXISTS (SELECT 1 FROM order_fulfillment_deadlines d WHERE d.order_id = order_redemptions.order_id AND d.due_at <= ?)`).run(order.id, row.account, Date.now(), new Date().toISOString());
-        if (!started.changes) throw new OrderError(409, 'REDEMPTION_BUSY', '账号确认信息已更新，请刷新后核对。');
-        try {
-          const response = await request('/v2/redemptions/' + encodeURIComponent(prepared.id) + '/submit', {
-            method: 'POST', headers: { 'X-Redemption-Token': prepared.token, 'Idempotency-Key': row.submit_key },
-            body: JSON.stringify({ termsVersion: prepared.policy.terms, privacyVersion: prepared.policy.privacy }),
-          }, [row.code, prepared.token]);
-          const submittedOrderNo = string(record(response.order).orderNo);
-          if (submittedOrderNo) db.prepare('UPDATE order_redemptions SET submitted_order_no = COALESCE(submitted_order_no,?) WHERE order_id = ?').run(submittedOrderNo,order.id);
-          saveResult(order, response);
-        } catch (error) {
-          if (!(error instanceof OrderError)) throw error;
+        const session = readSession(sessionInput);
+        if (createHash('sha256').update(session.sessionInput).digest('hex') !== deferred.session_hash) {
+          throw new OrderError(409, 'REDEMPTION_EXPIRED', '登录信息已变化，请重新识别并确认账号。');
         }
-        return view(order);
+        const now = Date.now(), lease = now + 120000;
+        const locked = db.prepare(`UPDATE staff_redemption_previews SET lease_until=?
+          WHERE order_id=? AND account=? AND session_hash=? AND lease_until<=? AND expires_at>?`)
+          .run(lease, order.id, deferred.account, deferred.session_hash, now, new Date(now).toISOString());
+        if (!locked.changes) throw new OrderError(409, 'REDEMPTION_BUSY', '这笔订单正在处理，请稍后刷新。');
+        try {
+          const policy = parse<RedemptionPolicy>(deferred.policy)!;
+          await previewAccount(order, { sessionInput: session.sessionInput, consent: true, termsVersion: policy.terms, privacyVersion: policy.privacy }, true);
+          const verified = parse<RedemptionAccount>(rowFor(order.id)?.account ?? null);
+          if (!verified || verified.email.toLowerCase() !== account.email.toLowerCase()) {
+            db.prepare('UPDATE order_redemptions SET account=NULL WHERE order_id=? AND submitted=0').run(order.id);
+            throw new OrderError(409, 'REDEMPTION_ACCOUNT_CHANGED', '充值服务识别的账号与确认邮箱不一致，请重新获取登录信息并核对账号。');
+          }
+          return await submitPrepared(order, verified.confirmationId);
+        } finally {
+          db.prepare('UPDATE staff_redemption_previews SET lease_until=0 WHERE order_id=? AND lease_until=?').run(order.id, lease);
+        }
       });
     },
     timeoutCheck(order: Order) {

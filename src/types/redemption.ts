@@ -12,6 +12,7 @@ export type RedemptionView = {
   cancellation?: Order['cancellation'];
   enabled: boolean;
   submitted: boolean;
+  requiresSession?: boolean;
   rechargeEmail: string | null;
   account: RedemptionAccount | null;
   result: RedemptionResult | null;

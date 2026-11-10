@@ -6,7 +6,10 @@ export type Withdrawal = {
   id: string; username: string; amountCents: number; account: string; realName: string;
   status: WithdrawalStatus; createdAt: string; reviewedAt: string | null; reviewedBy: string | null;
   paidAt: string | null; transferNo: string | null; note: string;
+  payoutMethod: 'api' | 'manual';
+  manual?: { startedBy: string; startedAt: string; recordedBy: string | null; recordedAt: string | null; hasReceipt: boolean };
 };
+export const withdrawalReceiptLimit = 512 * 1024;
 export type WithdrawalReport = {
   environment: 'sandbox' | 'production'; payoutEnabled: boolean; page: number; pageSize: number; total: number;
   balance: { earnedCents: number; availableCents: number; heldCents: number; paidCents: number; deficitCents: number } | null;

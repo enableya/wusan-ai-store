@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { PaymentGateway } from './alipay.ts';
 import type { Withdrawal, WithdrawalReport, PayoutResult } from '../src/types/withdrawals.ts';
-import { withdrawalStatuses } from '../src/types/withdrawals.ts';
+import { withdrawalReceiptLimit, withdrawalStatuses } from '../src/types/withdrawals.ts';
 import { amountCents, OrderError } from './orders.ts';
 import { verifyPassword, dummyPasswordHash } from './passwords.ts';
 
@@ -26,15 +26,21 @@ export function withdrawalRepository(db: DatabaseSync, gateway: PaymentGateway) 
     return { earnedCents: earned, heldCents, paidCents, availableCents: Math.max(0, earned - heldCents - paidCents), deficitCents: Math.max(0, heldCents + paidCents - earned) };
   }
   function raw(id: string) {
-    const row = db.prepare('SELECT * FROM referral_withdrawals WHERE id = ? AND environment = ?').get(id, environment);
+    const row = db.prepare('SELECT w.*, c.username FROM referral_withdrawals w JOIN customers c ON c.id = w.customer_id WHERE w.id = ? AND w.environment = ?').get(id, environment);
     if (!row) throw new OrderError(404, 'WITHDRAWAL_NOT_FOUND', '提现申请不存在。');
     return row;
   }
-  function view(row: Record<string, unknown>): Withdrawal {
+  function view(row: Record<string, unknown>, admin = false): Withdrawal {
+    const manual = admin && row.payout_method === 'manual'
+      ? db.prepare('SELECT started_by, started_at, recorded_by, recorded_at, receipt IS NOT NULL AS has_receipt FROM referral_manual_payouts WHERE withdrawal_id = ?').get(String(row.id)) : null;
     return { id: String(row.id), username: String(row.username || ''), amountCents: Number(row.amount_cents), account: String(row.payee_account),
       realName: String(row.payee_name), status: row.status as Withdrawal['status'], createdAt: String(row.created_at),
       reviewedAt: row.reviewed_at ? String(row.reviewed_at) : null, reviewedBy: row.reviewed_by ? String(row.reviewed_by) : null,
-      paidAt: row.paid_at ? String(row.paid_at) : null, transferNo: row.transfer_no ? String(row.transfer_no) : null, note: String(row.note) };
+      paidAt: row.paid_at ? String(row.paid_at) : null, transferNo: row.transfer_no ? String(row.transfer_no) : null, note: String(row.note),
+      payoutMethod: row.payout_method as Withdrawal['payoutMethod'],
+      ...(manual ? { manual: { startedBy: String(manual.started_by), startedAt: String(manual.started_at),
+        recordedBy: manual.recorded_by ? String(manual.recorded_by) : null, recordedAt: manual.recorded_at ? String(manual.recorded_at) : null,
+        hasReceipt: !!manual.has_receipt } } : {}) };
   }
   function event(id: string, actor: string, action: string, status: string, note = '') {
     db.prepare('INSERT INTO referral_withdrawal_events(withdrawal_id,actor,action,status,note,created_at) VALUES (?,?,?,?,?,?)').run(id, actor, action, status, note, now());
@@ -78,7 +84,7 @@ export function withdrawalRepository(db: DatabaseSync, gateway: PaymentGateway) 
       const total = Number(db.prepare(`SELECT count(*) AS n FROM referral_withdrawals w WHERE ${where}`).get(...args)!.n);
       const currentPage = Math.min(page, Math.max(1, Math.ceil(total / 20)));
       const rows = db.prepare(`SELECT w.*, c.username FROM referral_withdrawals w JOIN customers c ON c.id = w.customer_id WHERE ${where}
-        ORDER BY w.created_at DESC, w.id DESC LIMIT 20 OFFSET ?`).all(...args, (currentPage - 1) * 20).map(view);
+        ORDER BY w.created_at DESC, w.id DESC LIMIT 20 OFFSET ?`).all(...args, (currentPage - 1) * 20).map(row => view(row, !customerId));
       return { environment, payoutEnabled: !!gateway.payout?.enabled, page: currentPage, pageSize: 20, total, rows, balance: customerId ? balance(customerId) : null };
     },
     async request(customerId: string, input: Record<string, unknown>, key: string, authorize: () => void = () => {}) {
@@ -101,8 +107,8 @@ export function withdrawalRepository(db: DatabaseSync, gateway: PaymentGateway) 
         }
         if (balance(customerId).availableCents < amount) throw fail('可提现余额不足，请刷新余额后重试。', 'INSUFFICIENT_BALANCE');
         const id = 'WD' + randomBytes(16).toString('hex');
-        db.prepare(`INSERT INTO referral_withdrawals(id,customer_id,environment,amount_cents,payee_account,payee_name,status,idempotency_key,created_at)
-          VALUES (?,?,?,?,?,?,'pending',?,?)`).run(id, customerId, environment, amount, account, realName, key, now());
+        db.prepare(`INSERT INTO referral_withdrawals(id,customer_id,environment,amount_cents,payee_account,payee_name,status,idempotency_key,created_at,payout_method)
+          VALUES (?,?,?,?,?,?,'pending',?,?,'manual')`).run(id, customerId, environment, amount, account, realName, key, now());
         event(id, customerId, 'request', 'pending');
         return view(raw(id));
       });
@@ -120,28 +126,95 @@ export function withdrawalRepository(db: DatabaseSync, gateway: PaymentGateway) 
         return view(raw(id));
       });
     },
+    manualStart(id: string, actor: string) {
+      return transaction(() => {
+        const row = raw(id);
+        const existing = db.prepare('SELECT * FROM referral_manual_payouts WHERE withdrawal_id = ?').get(id);
+        if (row.status === 'processing' && row.payout_method === 'manual' && existing?.started_by === actor) return view(row, true);
+        if (row.status !== 'approved') throw fail('仅审核通过且未打款的申请可以领取人工打款。');
+        covered(String(row.customer_id));
+        const startedAt = now();
+        db.prepare(`INSERT INTO referral_manual_payouts(withdrawal_id,started_by,started_at) VALUES (?,?,?)
+          ON CONFLICT(withdrawal_id) DO UPDATE SET started_by=excluded.started_by,started_at=excluded.started_at`).run(id, actor, startedAt);
+        db.prepare(`UPDATE referral_withdrawals SET status='processing',payout_method='manual',
+          note='人工打款处理中，款项仍冻结，尚未确认到账。' WHERE id=?`).run(id);
+        event(id, actor, 'manual-start', 'processing');
+        return view(raw(id), true);
+      });
+    },
+    manualComplete(id: string, actor: string, input: Record<string, unknown>) {
+      const transferNo = typeof input.transferNo === 'string' ? input.transferNo.trim() : '';
+      const paidAt = typeof input.paidAt === 'string' ? input.paidAt : '';
+      const paidTime = Date.parse(paidAt);
+      const amount = typeof input.amount === 'string' ? amountCents(input.amount) : null;
+      if (input.confirmed !== true || !/^\d{16,64}$/.test(transferNo) || !Number.isFinite(paidTime) || !paidAt.endsWith('Z')
+        || paidTime > Date.now() || !amount) throw new OrderError(400, 'INVALID_MANUAL_PAYOUT', '请填写支付宝交易号、实际转账金额及有效的转账时间，并确认已核实转账成功。');
+      const receipt = typeof input.receipt === 'string' ? input.receipt : '';
+      if (receipt.length > Math.ceil(withdrawalReceiptLimit / 3) * 4 + 32) throw new OrderError(400, 'INVALID_RECEIPT', '转账凭证仅支持 512 KB 以内的 PNG 或 JPG 图片。');
+      const match = /^data:(image\/(?:png|jpeg));base64,([A-Za-z0-9+/]+={0,2})$/.exec(receipt);
+      const bytes = match ? Buffer.from(match[2], 'base64') : Buffer.alloc(0);
+      const validImage = match?.[1] === 'image/png'
+        ? bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))
+        : bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
+      if (!match || !bytes.length || bytes.length > withdrawalReceiptLimit || bytes.toString('base64') !== match[2] || !validImage) {
+        throw new OrderError(400, 'INVALID_RECEIPT', '请上传 512 KB 以内的 PNG 或 JPG 转账成功凭证。');
+      }
+      return transaction(() => {
+        const row = raw(id);
+        const record = db.prepare('SELECT * FROM referral_manual_payouts WHERE withdrawal_id = ?').get(id);
+        if (row.payout_method !== 'manual' || !record || record.started_by !== actor) throw fail('请由领取该笔人工打款的管理员完成登记。');
+        if (row.amount_cents !== amount || paidTime < Date.parse(String(row.created_at))) throw fail('转账金额或时间与提现申请不符，请核对原始凭证。');
+        const normalizedTime = new Date(paidTime).toISOString();
+        if (row.status === 'paid' && row.transfer_no === transferNo && row.paid_at === normalizedTime
+          && record.receipt instanceof Uint8Array && bytes.equals(record.receipt)) return view(row, true);
+        if (row.status !== 'processing') throw fail('申请状态已变更，请刷新列表，勿重复登记或转账。');
+        if (db.prepare('SELECT id FROM referral_withdrawals WHERE transfer_no = ? AND id != ?').get(transferNo, id)) {
+          throw fail('该支付宝交易号已登记在其他提现单，不能重复使用。');
+        }
+        // The transfer has already happened; a later rebate refund must not prevent truthful settlement.
+        db.prepare(`UPDATE referral_manual_payouts SET recorded_by=?,recorded_at=?,receipt=?,receipt_type=? WHERE withdrawal_id=?`)
+          .run(actor, now(), bytes, match[1], id);
+        db.prepare(`UPDATE referral_withdrawals SET status='paid',transfer_no=?,paid_at=?,note='人工转账已核实，打款凭证已登记。' WHERE id=?`)
+          .run(transferNo, normalizedTime, id);
+        event(id, actor, 'manual-complete', 'paid', `支付宝交易号：${transferNo}；转账时间：${normalizedTime}`);
+        return view(raw(id), true);
+      });
+    },
+    manualRelease(id: string, actor: string, input: Record<string, unknown>) {
+      const reason = typeof input.reason === 'string' ? input.reason.trim() : '';
+      if (input.confirmed !== true || !reason || reason.length > 300) throw new OrderError(400, 'INVALID_MANUAL_RELEASE', '请填写退回原因，并确认未发生成功转账；结果未知时不得退回。');
+      return transaction(() => {
+        const row = raw(id);
+        const record = db.prepare('SELECT started_by FROM referral_manual_payouts WHERE withdrawal_id=?').get(id);
+        if (row.payout_method !== 'manual' || row.status !== 'processing' || record?.started_by !== actor) throw fail('仅经办人可以退回尚未转账成功的人工打款。');
+        db.prepare("UPDATE referral_withdrawals SET status='approved',note=? WHERE id=?").run(reason, id);
+        event(id, actor, 'manual-release', 'approved', reason);
+        return view(raw(id), true);
+      });
+    },
+    receipt(id: string) {
+      raw(id);
+      const record = db.prepare('SELECT receipt,receipt_type FROM referral_manual_payouts WHERE withdrawal_id=?').get(id);
+      if (!(record?.receipt instanceof Uint8Array)) throw new OrderError(404, 'RECEIPT_NOT_FOUND', '该提现单尚无打款凭证。');
+      return { bytes: record.receipt, type: String(record.receipt_type) };
+    },
     async pay(id: string, actor: string, queryOnly = false) {
+      if (!queryOnly) throw fail('提现已改为人工打款，请领取人工打款并在转账成功后登记凭证。', 'MANUAL_PAYOUT_REQUIRED');
       const payout = configured();
       if (locks.has(id)) throw fail('该笔打款正在处理中，请稍后查询。');
       locks.add(id);
       try {
         const row = transaction(() => {
           const current = raw(id);
+          if (current.payout_method === 'manual') throw fail('该申请使用人工打款，不得发起或查询接口转账。');
           if (current.status === 'paid' || current.status === 'failed') return current;
-          if (queryOnly) {
-            if (current.status !== 'processing') throw fail('该笔提现尚未发起打款。');
-            merchant(current); return current;
-          }
-          if (current.status !== 'approved') throw fail('仅审核通过且未打款的申请可以发起打款。');
-          covered(String(current.customer_id));
-          db.prepare("UPDATE referral_withdrawals SET status = 'processing', app_id = ?, seller_id = ?, note = '打款结果确认中，请勿重复发起。' WHERE id = ?")
-            .run(gateway.appId, gateway.sellerId, id);
-          event(id, actor, 'pay', 'processing');
+          if (current.status !== 'processing') throw fail('该笔提现尚未发起接口打款。');
+          merchant(current);
           return current;
         });
         if (row.status === 'paid' || row.status === 'failed') return view(row);
         const request = { id, amountCents: Number(row.amount_cents), account: String(row.payee_account), realName: String(row.payee_name) };
-        try { return applyResult(id, await (queryOnly ? payout.query(request) : payout.transfer(request))); }
+        try { return applyResult(id, await payout.query(request)); }
         catch {
           // An unknown outcome remains reserved. Never create a second transfer number or infer failure from a timeout.
           transaction(() => {

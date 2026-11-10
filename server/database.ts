@@ -14,7 +14,7 @@ export function openDatabase(filename: string) {
     db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
     db.exec('BEGIN IMMEDIATE');
     const version = (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
-    if (version > 19) throw new Error('Database schema is newer than this server supports.');
+    if (version > 21) throw new Error('Database schema is newer than this server supports.');
     if (version === 0) {
       db.exec(`
         CREATE TABLE products (
@@ -322,6 +322,30 @@ export function openDatabase(filename: string) {
       if (!columns.includes('source')) db.exec(`ALTER TABLE order_cancellations ADD COLUMN source TEXT NOT NULL DEFAULT 'timeout'
         CHECK(source IN ('timeout','customer_unpaid','customer_paid'))`);
       db.exec('PRAGMA user_version = 19;');
+    }
+    if (version < 20) {
+      const columns = db.prepare('PRAGMA table_info(referral_withdrawals)').all().map(row => row.name);
+      if (!columns.includes('payout_method')) db.exec(`ALTER TABLE referral_withdrawals ADD COLUMN payout_method TEXT NOT NULL DEFAULT 'api'
+        CHECK(payout_method IN ('api','manual'))`);
+      db.exec(`CREATE TABLE IF NOT EXISTS referral_manual_payouts (
+        withdrawal_id TEXT PRIMARY KEY REFERENCES referral_withdrawals(id),
+        started_by TEXT NOT NULL, started_at TEXT NOT NULL,
+        recorded_by TEXT, recorded_at TEXT, receipt BLOB, receipt_type TEXT,
+        CHECK((receipt IS NULL AND receipt_type IS NULL) OR
+          (receipt IS NOT NULL AND length(receipt) BETWEEN 1 AND 524288 AND receipt_type IN ('image/png','image/jpeg')))
+      ) STRICT;
+      PRAGMA user_version = 20;`);
+    }
+    if (version < 21) {
+      db.exec(`CREATE TABLE IF NOT EXISTS staff_redemption_previews (
+        order_id TEXT PRIMARY KEY REFERENCES orders(id),
+        account TEXT NOT NULL CHECK(json_valid(account)),
+        session_hash TEXT NOT NULL,
+        policy TEXT NOT NULL CHECK(json_valid(policy)),
+        expires_at TEXT NOT NULL,
+        lease_until INTEGER NOT NULL DEFAULT 0
+      ) STRICT;
+      PRAGMA user_version = 21;`);
     }
     db.exec('COMMIT');
     return db;
