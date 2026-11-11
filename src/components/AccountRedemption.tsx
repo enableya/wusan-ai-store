@@ -5,30 +5,30 @@ import { Icon } from './Icon';
 import { useApiResource } from '../hooks/useApiResource';
 import { ApiError, postApi } from '../services/api';
 import { resultTag } from '../lib/redemption-status';
+import { redemptionProgress } from '../lib/redemption-progress';
+import { RedemptionHistory } from './RedemptionHistory';
 import type { RedemptionPolicy, RedemptionResult, RedemptionView } from '../types/redemption';
 
 
 function RedemptionSteps({ result }: { result: RedemptionResult | null }) {
-  const success = result?.settlement === 'PAID' || result?.renewal === 'paid';
-  const stage = success ? 4 : result?.renewal || ['RECONCILE_ONLY', 'MANUAL_REVIEW', 'FULFILLED', 'CANCELED', 'NO_CHARGE'].includes(result?.state ?? '') ? 2
-    : result?.state === 'FULFILLING' ? 1 : result?.state === 'QUEUED' ? 0 : -1;
+  const failed = resultTag(result).tone === 'failure';
+  const stage = redemptionProgress(result).stage;
   const attention = resultTag(result).tone === 'attention' || resultTag(result).tone === 'failure';
   return <ol className="redemption-stage-list" aria-label="充值流程">
-    {['排队受理', '充值处理', '结果确认', '充值成功'].map((label, index) => {
+    {['排队受理', '充值处理', '结果确认', failed ? '充值未完成' : '充值成功'].map((label, index) => {
       const complete = stage === 4 || index < stage;
-      return <li key={label} data-complete={complete} data-active={index === stage} data-attention={index === stage && attention} aria-current={index === stage ? 'step' : undefined}>
-        <span>{complete ? '✓' : index + 1}</span><strong>{label}</strong>
+      return <li key={label} data-complete={complete} data-active={index === stage} data-attention={index === stage && attention} data-failure={index === stage && failed || undefined} aria-current={index === stage ? 'step' : undefined}>
+        <span>{complete ? '✓' : index === stage && failed ? '×' : index + 1}</span><strong>{label}</strong>
       </li>;
     })}
   </ol>;
 }
 
-function RedemptionLoading({ label, result }: { label: string; result?: RedemptionResult | null }) {
+function RedemptionLoading({ label }: { label: string }) {
   return <div className="redemption-loading" role="status" aria-live="polite">
     <div className="redemption-loading-content">
       <div className="redemption-loading-indicator"><span className="redemption-loading-ring" aria-hidden="true" /></div>
       <span className="redemption-loading-label">{label}</span>
-      {result !== undefined && <RedemptionSteps result={result} />}
     </div>
   </div>;
 }
@@ -57,6 +57,7 @@ export function AccountRedemption({ orderId, productName, onResult, onBusyChange
   const policyData = policy.data;
   const result = view?.result ?? null;
   const tag = resultTag(result);
+  const progress = redemptionProgress(result);
   const submitted = view?.submitted;
   const sessionExpired = validationCode === 'SESSION_EXPIRED'
     || ((!validationCode || validationCode === 'INVALID_SESSION') && /过期|失效/.test(validationError || ''));
@@ -91,7 +92,7 @@ export function AccountRedemption({ orderId, productName, onResult, onBusyChange
         try {
           const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]);
           const next = await postApi<RedemptionView>(path + '/refresh', {}, undefined, signal);
-          if (!controller.signal.aborted) { setUpdated(next); }
+          if (!controller.signal.aborted) { setUpdated(next); setProgressPaused(false); }
           delay = interval;
         } catch (cause) {
           if (controller.signal.aborted) return;
@@ -150,15 +151,19 @@ export function AccountRedemption({ orderId, productName, onResult, onBusyChange
   </section>;
 
   const charging = !settled && !progressPaused && result?.state !== 'MANUAL_REVIEW' && result?.state !== 'CANCELED';
-  if (submitted) return <section className="account-redemption redemption-result-panel" aria-label="开通结果" aria-busy={charging}>
-    {charging && <RedemptionLoading label={tag.label} result={result} />}
+  const succeeded = tag.tone === 'success';
+  if (submitted) return <section className="account-redemption redemption-result-panel" data-success={succeeded || undefined} data-failure={tag.tone === 'failure' || undefined} aria-label="开通结果" aria-busy={charging}>
     <h3>开通结果</h3>
-    {!charging && <RedemptionSteps result={result} />}
-    <p role="status"><span className="status-badge redemption-result-tag" data-tone={tag.tone}>{tag.label}</span></p>
+    {succeeded && <p className="redemption-success-banner" role="status"><Icon name="circle-check" /><span className="redemption-result-tag" data-tone="success">{tag.label}</span></p>}
+    <RedemptionSteps result={result} />
+    {!settled && <div className="redemption-progress-status" role="status">{charging && <span className="redemption-loading-ring" aria-hidden="true" />}<div><strong>{progress.title}</strong><p>{progress.detail}</p></div></div>}
+    {tag.tone === 'failure' && result?.reason ? <div className="redemption-validation-error redemption-failure-detail" role="alert"><Icon name="info" /><div><h4>充值未完成</h4><p>{result.reason}</p></div></div>
+      : !succeeded && settled && <p role="status"><span className="status-badge redemption-result-tag" data-tone={tag.tone}>{tag.label}</span></p>}
+    <RedemptionHistory result={result} />
     <dl className="redemption-result-email"><dt>开通邮箱</dt><dd>{view.rechargeEmail || '未记录'}</dd></dl>
-    {result?.orderNo && <p>兑换单号 <span className="mono">{result.orderNo}</span></p>}
+    {result?.orderNo && <p className="redemption-result-order">兑换单号 <span className="mono">{result.orderNo}</span></p>}
     {!settled && <p className="field-hint">可稍后在订单页查询原单进度。</p>}
-    {view.enabled && !settled && <button type="button" className="button secondary" disabled={busy} onClick={() => void send('refresh', {})}>刷新充值进度</button>}
+    {view.enabled && <button type="button" className="button secondary" disabled={busy} onClick={() => void send('refresh', {})}>{succeeded ? '刷新处理记录' : '刷新充值进度'}</button>}
   </section>;
 
   if (!view.enabled) return <p role="status" className="account-redemption">当前环境暂未开放账号兑换。</p>;

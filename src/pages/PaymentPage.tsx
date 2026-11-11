@@ -11,7 +11,7 @@ import { useApiResource } from '../hooks/useApiResource';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { postApi } from '../services/api';
 import type { Order, PaymentConfig } from '../types/orders';
-import { orderStatus } from '../types/orders';
+import { orderStatusLabel } from '../types/orders';
 import { formatDate, money } from '../lib/format';
 import './product-detail.css';
 
@@ -102,11 +102,11 @@ export default function PaymentPage() {
   const resultTitle = order.staffCheckout ? '连接账号' : '支付结果';
   return <div className="container page-space">
     <Breadcrumb items={[{ label: '我的订单', to: '/orders' }, { label: order.status === 'paid' ? resultTitle : '订单与支付' }]} />
-    <PageHeading title={order.staffCheckout ? '免付开通订单' : order.status === 'paid' ? '付款已确认' : order.status === 'cancelled' ? '订单已取消' : order.status === 'closed' ? '订单已关闭' : '订单已创建，等待付款'} eyebrow="ORDER & PAYMENT" description={order.status === 'pending' ? '请核对金额后通过支付宝付款。' : undefined} />
+    <PageHeading title={order.cancellation?.voucherReclaimed ? '卡密已回收，订单已取消' : order.status === 'cancelled' ? '订单已取消' : order.staffCheckout ? '免付开通订单' : order.status === 'paid' ? '付款已确认' : order.status === 'closed' ? '订单已关闭' : '订单已创建，等待付款'} eyebrow="ORDER & PAYMENT" description={order.status === 'pending' ? '请核对金额后通过支付宝付款。' : undefined} />
     {!order.staffCheckout && (config.error ? <button type="button" className="text-button" onClick={config.reload}>重试加载支付配置</button>
       : !config.data?.enabled && <Notice>{config.data?.message || '正在读取支付配置…'}</Notice>)}
     <div className="detail-layout"><section className="order-detail-main">
-      <div className="section-heading"><h2>订单信息</h2><span className="status-badge pending">{order.staffCheckout ? '免付开通' : orderStatus[order.status]}</span></div>
+      <div className="section-heading"><h2>订单信息</h2><span className="status-badge pending">{orderStatusLabel(order)}</span></div>
       <dl className="spec-list"><div><dt>订单号</dt><dd className="mono">{order.id}</dd></div>
         <div><dt>订阅方案</dt><dd>{order.productName}</dd></div><div><dt>周期 / 数量</dt><dd>{order.periodMonths} 个月 / 1 份</dd></div>
         <div><dt>订单金额</dt><dd>¥{money(order.priceCents)}</dd></div><div><dt>创建时间</dt><dd>{formatDate(order.createdAt)}</dd></div>

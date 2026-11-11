@@ -13,6 +13,35 @@ async function setup(page: Page, mock: Mock) {
 const rowFor = (page: Page, id: string) => page.locator('.server-order-row').filter({ hasText: id });
 const tab = (page: Page, name: string) => page.getByRole('button', { name, exact: true });
 
+for(const width of [320,390,1440]) {
+  test(`${width}px active subscription displays the concrete failure reason and refreshes historical results`,async({page})=>{
+    const mock=createOrderMock(),scenario=mock.scenarios.find(s=>s.key==='no_charge')!;
+    const reason='已有有效订阅，暂不能重复充值。';
+    scenario.order.recharge!.reason=reason;
+    await setup(page,mock);await page.setViewportSize({width,height:1000});await page.goto('/orders');
+    await expect(rowFor(page,scenario.order.id).locator('.order-recharge-badge')).toHaveText(reason);
+    await rowFor(page,scenario.order.id).getByRole('link',{name:'查看订单',exact:false}).click();
+    const panel=page.getByRole('region',{name:'开通结果'});
+    await expect(panel.getByRole('alert')).toContainText(reason);
+    await expect(panel).not.toContainText('充值未完成，本次未扣款');
+    await expect(panel.locator('[data-failure="true"] > span')).toHaveText('×');
+    await expect(panel.getByRole('list',{name:'充值流程'})).toContainText('充值未完成');
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1)).toBe(false);
+    await panel.screenshot({path:`artifacts/active-subscription-reason-${width}.png`});
+    await page.reload();await expect(panel.getByRole('alert')).toContainText(reason);
+    // Historical results without explanations can query the original request,
+    // never submit a new recharge to discover the failure reason.
+    await page.route(`**/api/orders/${scenario.order.id}/redemption`,route=>route.fulfill({json:{data:{enabled:true,submitted:true,account:null,rechargeEmail:null,result:{...scenario.order.recharge,reason:undefined,orderNo:'MOCK-RECHARGE',progress:0}}}}));
+    let refreshes=0;
+    await page.route(`**/api/orders/${scenario.order.id}/redemption/refresh`,route=>{
+      refreshes++;return route.fulfill({json:{data:{enabled:true,submitted:true,account:null,rechargeEmail:null,result:{...scenario.order.recharge,orderNo:'MOCK-RECHARGE',progress:0}}}});
+    });
+    await page.reload();await expect(panel.locator('.redemption-result-tag')).toHaveText('充值未完成，本次未扣款');
+    await panel.getByRole('button',{name:'刷新充值进度',exact:true}).click();
+    await expect(panel.getByRole('alert')).toContainText(reason);expect(refreshes).toBe(1);
+  });
+}
+
 for (const width of [390, 1440]) {
   test(`${width}px mock matrix: all recharge states, emails, counts and cancel eligibility`, async ({ page }) => {
     const mock = createOrderMock();

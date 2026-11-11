@@ -57,7 +57,7 @@ export function orderRepository(db: DatabaseSync, gateway: PaymentGateway) {
     WHERE r.order_id = ? AND (json_extract(r.result, '$.settlement') = 'PAID'
       OR json_extract(r.result, '$.renewal') = 'paid')`);
   const rechargeStatus = db.prepare(`SELECT submitted, json_extract(result, '$.state') AS state,
-    json_extract(result, '$.settlement') AS settlement, json_extract(result, '$.renewal') AS renewal
+    json_extract(result, '$.settlement') AS settlement, json_extract(result, '$.renewal') AS renewal, json_extract(result, '$.reason') AS reason
     FROM order_redemptions WHERE order_id = ?`);
   const toView = (row: Record<string, unknown>): Order => {
     const order = view(row);
@@ -67,7 +67,7 @@ export function orderRepository(db: DatabaseSync, gateway: PaymentGateway) {
     if (order.status === 'paid' && !cancellation) {
       const recharge = rechargeStatus.get(order.id);
       order.recharge = { submitted: Boolean(recharge?.submitted), state: String(recharge?.state || ''),
-        settlement: String(recharge?.settlement || ''), renewal: String(recharge?.renewal || '') };
+        settlement: String(recharge?.settlement || ''), renewal: String(recharge?.renewal || ''), ...(recharge?.reason ? { reason: String(recharge.reason) } : {}) };
     }
     const context = JSON.parse(String(row.snapshot)).payment;
     let cancelAction: Order['cancelAction'] = null;
@@ -144,6 +144,11 @@ export function orderRepository(db: DatabaseSync, gateway: PaymentGateway) {
         ORDER BY created_at DESC LIMIT 200`).all(environment, owner, staffOwner, owner, new Date().toISOString()).map(toView) : [];
     },
     owned,
+    forAdmin(id: string) {
+      const row = db.prepare('SELECT * FROM orders WHERE id=? AND environment=?').get(id,environment);
+      if (!row) throw new OrderError(404,'ORDER_NOT_FOUND','未找到当前环境的订单。');
+      return toView(row);
+    },
     cancellationEligible(id: string, owner: string | null) {
       ready();
       const order = owned(id,owner);

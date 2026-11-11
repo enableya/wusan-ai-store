@@ -45,6 +45,7 @@ function RefundReviewDialog({ order, approve, onClose, onSaved, onExpired }: {
 }
 
 export function AdminRefundReviews({ onExpired }: { onExpired: () => void }) {
+  const message = useMessage();
   const [params] = useSearchParams();
   const [filters, setFilters] = useState(() => ({ orderNo: (params.get('orderNo') || '').slice(0, 80), refundReview: 'pending', page: 1 }));
   const [draft, setDraft] = useState(() => ({ orderNo: filters.orderNo, refundReview: filters.refundReview }));
@@ -58,6 +59,10 @@ export function AdminRefundReviews({ onExpired }: { onExpired: () => void }) {
   function reset() {
     const next = { orderNo: '', refundReview: 'pending' };
     setDraft(next); setFilters({ ...next, page: 1 }); reload();
+  }
+  async function copyVoucher(code: string) {
+    try { await navigator.clipboard.writeText(code); message.success('卡密已复制。'); }
+    catch { message.error('复制失败，可选中卡密后手动复制。'); }
   }
   const page = data?.page ?? filters.page;
   return <>
@@ -75,9 +80,10 @@ export function AdminRefundReviews({ onExpired }: { onExpired: () => void }) {
     {data && <section className="admin-panel order-list" aria-busy={loading}>
       <div className="admin-panel-title"><div><h2 id="refund-list-title">退款审核列表</h2><p>默认查看全部时间的待审核退款 · 共 {data.total} 条符合条件的记录</p></div><span className="admin-chip">{data.environment === 'production' ? '正式数据' : '测试数据'}</span></div>
       <AdminTable className="order-table refund-review-table" labelledBy="refund-list-title" emptyState={!data.orders.length && <p>暂无符合条件的退款审核记录。</p>}>
-        <thead><tr>{['订单号', '商品 / 充值邮箱', '订单金额', '已退款 / 待退金额', '审核状态', '退款进度', '提交审核时间', '审核人 / 时间', '审核备注', '操作'].map(label => <th scope="col" key={label}>{label}</th>)}</tr></thead>
+        <thead><tr>{['订单号', '商品 / 充值邮箱', '卡密', '订单金额', '已退款 / 待退金额', '审核状态', '退款进度', '提交审核时间', '审核人 / 时间', '审核备注', '操作'].map(label => <th scope="col" key={label}>{label}</th>)}</tr></thead>
         <tbody>{data.orders.map(order => <tr key={order.id}>
           <td className="order-id">{order.id}</td><td className="order-email-cell"><strong>{order.productName}</strong><small>{order.rechargeEmail || '未记录充值邮箱'}</small></td>
+          <td className="order-voucher-cell">{!data.canViewVoucherCodes ? <span className="admin-table-secondary">无查看权限</span> : order.voucherCode ? <><code>{order.voucherCode}</code><button type="button" className="text-button" onClick={() => void copyVoucher(order.voucherCode!)} aria-label={`复制订单 ${order.id} 的卡密`}>复制卡密</button></> : <span className="admin-table-secondary">未分配 / 未记录</span>}</td>
           <td className="admin-table-number">¥{money(order.priceCents)}</td><td className="admin-table-number">已退 ¥{money(order.refundedCents)}<small>待退 ¥{money(Math.max(0, order.priceCents - order.refundedCents))}</small></td>
           <td><strong>{order.refundReview && orderRefundReviewStatuses[order.refundReview.status]}</strong></td>
           <td className="order-refund-cell">{order.cancellationMessage || '—'}</td>

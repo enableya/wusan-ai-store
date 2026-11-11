@@ -75,6 +75,14 @@ test('timeout refund reviews require a separate permission, same origin, current
   const refunds=(await request('/api/admin/refunds',undefined,viewer.cookie)).json.data as unknown as import('../src/types/admin.ts').AdminOrderList;
   assert.equal(refunds.total,1);assert.equal(refunds.orders[0].id,id);assert.equal(refunds.canViewVoucherCodes,false);
   assert.equal(refunds.orders[0].voucherCode,null);assert.doesNotMatch(JSON.stringify(refunds),/PRIVATE-REFUND-CARD/);
+  const fullRefunds=(await request('/api/admin/refunds',undefined,admin.cookie)).json.data as unknown as import('../src/types/admin.ts').AdminOrderList;
+  assert.equal(fullRefunds.canViewVoucherCodes,true);assert.equal(fullRefunds.orders[0].voucherCode,'PRIVATE-REFUND-CARD');
+  db.prepare("UPDATE admin_accounts SET permissions='[\"orders.view\",\"orders.refund\",\"vouchers.codes\"]' WHERE username='refund-viewer'").run();
+  const grantedRefunds=(await request('/api/admin/refunds',undefined,viewer.cookie)).json.data as unknown as import('../src/types/admin.ts').AdminOrderList;
+  assert.equal(grantedRefunds.canViewVoucherCodes,true);assert.equal(grantedRefunds.orders[0].voucherCode,'PRIVATE-REFUND-CARD');
+  db.prepare("UPDATE admin_accounts SET permissions='[\"orders.view\",\"orders.refund\"]' WHERE username='refund-viewer'").run();
+  const revokedRefunds=(await request('/api/admin/refunds',undefined,viewer.cookie)).json.data as unknown as import('../src/types/admin.ts').AdminOrderList;
+  assert.equal(revokedRefunds.canViewVoucherCodes,false);assert.doesNotMatch(JSON.stringify(revokedRefunds),/PRIVATE-REFUND-CARD/);
   assert.equal((await request('/api/admin/refunds?refundReview=invalid',undefined,viewer.cookie)).response.status,400);
   const list=await request('/api/admin/orders?status=cancelled&refundReview=pending',undefined,viewer.cookie);
   const data=list.json.data as unknown as import('../src/types/admin.ts').AdminOrderList;
@@ -90,6 +98,47 @@ test('timeout refund reviews require a separate permission, same origin, current
   assert.equal((await request(path,{reason:''},viewer.cookie)).response.status,403);
   assert.equal((await request('/api/admin/refunds',undefined,viewer.cookie)).response.status,403);
   assert.equal(db.prepare('SELECT count(*) n FROM payment_refunds').get()!.n,0,'disabled local gateway must not initiate refunds');
+});
+
+test('staff voucher reclaim API checks permissions, origin, environment, current card and idempotent retries',async t=>{
+  const originalEnabled=process.env.LOVECODEX_ENABLED;process.env.LOVECODEX_ENABLED='true';
+  const originalFetch=globalThis.fetch;let queries=0;
+  globalThis.fetch=async(url,options)=>{
+    if(new URL(String(url)).hostname!=='lovecodex.cn')return originalFetch(url,options);
+    queries++;
+    return Response.json({ok:true,voucher:{state:'AVAILABLE',product:{id:'chatgpt-plus'}},order:null});
+  };
+  t.after(()=>{globalThis.fetch=originalFetch;if(originalEnabled===undefined)delete process.env.LOVECODEX_ENABLED;else process.env.LOVECODEX_ENABLED=originalEnabled;});
+  const {db,request,login}=await setup(t), admin=await login();
+  const id='WS'+randomUUID().replaceAll('-',''),otherId='WS'+randomUUID().replaceAll('-','');
+  const now=new Date().toISOString(),code='MOCK-API-RECLAIM-CARD';
+  for(const [orderId,environment] of [[id,'sandbox'],[otherId,'production']]) {
+    db.prepare(`INSERT INTO orders(id,owner_hash,email,snapshot,status,created_at,expires_at,idempotency_key,fingerprint,environment)
+      VALUES (?,'owner','',?,'paid',?,?,?,'fixture',?)`).run(orderId,JSON.stringify({productId:'chatgpt-plus',productName:'ChatGPT Plus',staffCheckout:true,priceCents:0}),now,now,orderId,environment);
+  }
+  const card=db.prepare("INSERT INTO voucher_inventory(product_id,environment,code,priority) VALUES ('chatgpt-plus','sandbox',?,0)").run(code);
+  db.prepare("INSERT INTO order_redemptions(order_id,voucher_id,submit_key) VALUES (?,?,'api-reclaim-key')").run(id,card.lastInsertRowid);
+  db.prepare('INSERT INTO order_fulfillment_details(order_id,voucher_id,voucher_code) VALUES (?,?,?)').run(id,card.lastInsertRowid,code);
+  insertAdminAccount(db,'reclaim-viewer',await hashAdminPassword('test-reclaim-password'),'admin',['orders.view','vouchers.codes','vouchers.delete']);
+  const viewer=await request('/api/admin/login',{username:'reclaim-viewer',password:'test-reclaim-password'});
+  const path=`/api/admin/orders/${id}/reclaim-voucher`,input={expectedVoucherCode:code};
+  assert.equal((await request(path,input)).response.status,401);
+  assert.equal((await request(path,input,viewer.cookie)).response.status,403);
+  assert.equal((await request(path,input,admin.cookie,'https://evil.example')).response.status,403);
+  assert.equal((await request(`/api/admin/orders/${otherId}/reclaim-voucher`,input,admin.cookie)).response.status,404);
+  assert.equal((await request(path,{expectedVoucherCode:'stale'},admin.cookie)).response.status,409);
+  assert.equal(queries,0);
+  const access=await request('/api/admin/users/reclaim-viewer/access',{role:'admin',permissions:['orders.reclaim']},admin.cookie);
+  assert.equal(access.response.status,200);
+  const report=(await request('/api/admin/orders',undefined,viewer.cookie)).json.data as unknown as import('../src/types/admin.ts').AdminOrderList;
+  assert.equal(report.canViewVoucherCodes,true);assert.equal(report.orders[0].canReclaimVoucher,true);
+  assert.equal((await request(path,input,viewer.cookie)).response.status,200);
+  assert.equal((await request(path,input,viewer.cookie)).response.status,200);assert.equal(queries,1);
+  const updated=(await request('/api/admin/orders?status=cancelled',undefined,viewer.cookie)).json.data as unknown as import('../src/types/admin.ts').AdminOrderList;
+  assert.equal(updated.orders[0].cancellation?.voucherReclaimed,true);assert.equal(updated.orders[0].voucherCode,code);
+  assert.equal(updated.orders[0].canReclaimVoucher,false);assert.equal(updated.counts.cancelled,1);
+  assert.equal(db.prepare('SELECT reclaimed_by FROM order_fulfillment_details WHERE order_id=?').get(id)!.reclaimed_by,'reclaim-viewer');
+  assert.equal(db.prepare('SELECT count(*) n FROM payment_refunds').get()!.n,0);
 });
 
 test('only super administrators manage accounts and existing sessions enforce updated permissions', async t => {
@@ -199,7 +248,7 @@ test('new schema and click records survive reopening without changing existing c
     db.close(); db = openDatabase(filename);
     assert.equal(db.prepare('SELECT count(*) AS n FROM product_clicks').get()!.n, 1);
     assert.equal(db.prepare('SELECT name FROM products WHERE id = ?').get('chatgpt-plus')!.name, '商家自定义名称');
-    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 21);
+    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 22);
     const legacy = db.prepare("SELECT role, permissions, password_hash FROM admin_accounts WHERE username = 'legacy'").get()!;
     assert.equal(legacy.role, 'admin');
     assert.equal(legacy.password_hash, 'existing-password-hash');
@@ -417,6 +466,7 @@ test('order fulfillment details keep recharge email and protect voucher codes wi
     {state:'FULFILLED',settlement:'UNKNOWN',renewal:''},
     {state:'FULFILLED',settlement:'PAID',renewal:''},
     {state:'NO_CHARGE',settlement:'NO_CHARGE',renewal:''},
+    {state:'NO_CHARGE',settlement:'NO_CHARGE',renewal:'',reason:'已有有效订阅，暂不能重复充值。'},
     {state:'',settlement:'UNKNOWN',renewal:'ready'},
     {state:'',settlement:'PAID',renewal:'paid'},
     {state:'FUTURE_STATE',settlement:'UNKNOWN',renewal:''},

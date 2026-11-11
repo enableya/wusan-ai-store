@@ -13,7 +13,7 @@ import { useSelections } from '../hooks/useSelections';
 import { formatDate, money } from '../lib/format';
 import { ApiState } from '../components/ApiState';
 import type { Order } from '../types/orders';
-import { orderStatus } from '../types/orders';
+import { orderStatus, orderStatusLabel } from '../types/orders';
 import { orderRechargeTag } from '../lib/redemption-status';
 
 export default function OrdersPage() {
@@ -32,11 +32,11 @@ export default function OrdersPage() {
   const filtered = selections.filter((selection) => !normalized || selection.productName.toLowerCase().includes(normalized) || selection.id.includes(normalized));
   const visibleOrders = (orders.data || []).filter(order => !order.staffCheckout || staffCheckout);
   const orderCounts = visibleOrders.reduce<Record<string, number>>((counts, order) => {
-    const status = order.staffCheckout ? '免付开通' : orderStatus[order.status];
+    const status = order.staffCheckout && order.status === 'paid' ? '免付开通' : orderStatus[order.status];
     counts[status] = (counts[status] || 0) + 1;
     return counts;
   }, { 全部: visibleOrders.length });
-  const matching = visibleOrders.filter(order => (filter === '全部' || (order.staffCheckout ? '免付开通' : orderStatus[order.status]) === filter)
+  const matching = visibleOrders.filter(order => (filter === '全部' || (order.staffCheckout && order.status === 'paid' ? '免付开通' : orderStatus[order.status]) === filter)
     && (!normalized || order.productName.toLowerCase().includes(normalized) || order.id.toLowerCase().includes(normalized)));
   const recover = () => openModal({ type: 'recover' });
   return <div className="container page-space orders-page">
@@ -55,7 +55,7 @@ export default function OrdersPage() {
         <span className="order-recharge-status" data-tone={orderRechargeTag(order).tone}>充值状态：<span className="order-recharge-badge">{orderRechargeTag(order).label}</span></span>
         {order.fulfillment?.status === 'succeeded' && <span className="order-recharge-email">充值邮箱：{order.fulfillment.rechargeEmail || '未记录'}</span>}
         {order.cancellation && <span className="order-cancellation-note" data-state={order.cancellation.state}>{order.cancellation.message}</span>}</div>
-      <span className="draft-price">¥{money(order.priceCents)}</span><span className="status-badge pending">{order.staffCheckout ? '免付开通' : orderStatus[order.status]}</span>
+      <span className="draft-price">¥{money(order.priceCents)}</span><span className="status-badge pending">{orderStatusLabel(order)}</span>
       <div className="server-order-actions"><CancelOrderButton order={order} onChanged={orders.reload} /><Link className="text-button" to={`/orders/${order.id}`}>{order.status === 'pending' ? '查看 / 付款' : '查看订单'} <Icon name="arrow-right" /></Link></div>
     </div>)}</div> : <div className="empty-state">
       <div className="empty-icon"><Icon name={normalized ? 'search-x' : 'receipt-text'} /></div>

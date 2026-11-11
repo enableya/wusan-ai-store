@@ -1,9 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { Order } from '../src/types/orders.ts';
-import type { RedemptionAccount, RedemptionPolicy, RedemptionResult, RedemptionView } from '../src/types/redemption.ts';
+import type { RedemptionAccount, RedemptionEvent, RedemptionPolicy, RedemptionResult, RedemptionView } from '../src/types/redemption.ts';
+import { redemptionProgress } from '../src/lib/redemption-progress.ts';
 import { OrderError } from './orders.ts';
-import { redemptionUpstreamError } from './redemption-errors.ts';
+import { readableDetail, redemptionUpstreamError } from './redemption-errors.ts';
+import { reclaimableStaffVoucher } from './staff-voucher-reclaim.ts';
 
 const endpoint = 'https://lovecodex.cn/api';
 const record = (value: unknown): Record<string, unknown> =>
@@ -11,6 +13,14 @@ const record = (value: unknown): Record<string, unknown> =>
 const string = (value: unknown, limit = 256) =>
   typeof value === 'string' && value.length <= limit ? value : '';
 const parse = <T>(value: string | null): T | null => value ? JSON.parse(value) as T : null;
+
+// Storefront plan IDs and upstream route IDs are separate namespaces. These
+// explicitly verified regional routes all deliver Pro 5x; never infer a tier
+// from a voucher prefix, product name or an arbitrary product ID suffix.
+const pro5xRoutes = new Set(['chatgpt-pro-5x', 'chatgpt-pro-5x-clp', 'chatgpt-pro-5x-egp']);
+const matchesVoucherProduct = (productId: string, upstreamId: unknown) =>
+  typeof upstreamId === 'string' && (upstreamId === productId
+    || productId === 'chatgpt-pro-5x' && pro5xRoutes.has(upstreamId));
 
 type Prepared = { id: string; token: string; expiresAt: string; policy: RedemptionPolicy };
 type StaffPreview = { account: string; session_hash: string; policy: string; expires_at: string; lease_until: number };
@@ -93,6 +103,9 @@ export function redemptionRepository(db: DatabaseSync, fetcher = fetch) {
   }
 
   function assertCanRedeem(order: Order) {
+    if (db.prepare('SELECT 1 FROM order_fulfillment_details WHERE order_id=? AND reclaimed_at IS NOT NULL').get(order.id)) {
+      throw new OrderError(409,'VOUCHER_ALREADY_RECLAIMED','卡密已回收，订单已取消，不能继续充值。');
+    }
     const blocked = db.prepare(`SELECT 1 FROM order_fulfillment_deadlines WHERE order_id = ? AND due_at <= ?
       UNION ALL SELECT 1 FROM order_cancellations WHERE order_id = ? AND state != 'fulfilled'`).get(order.id,new Date().toISOString(),order.id);
     if (blocked) throw new OrderError(409,'ORDER_FULFILLMENT_TIMEOUT','订单已申请取消或超过开通时限，暂不能继续充值，请刷新订单状态。');
@@ -123,11 +136,46 @@ export function redemptionRepository(db: DatabaseSync, fetcher = fetch) {
     if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) db.prepare(`INSERT INTO order_fulfillment_details(order_id,recharge_email) VALUES (?,?)
       ON CONFLICT(order_id) DO UPDATE SET recharge_email=excluded.recharge_email`).run(order.id,email);
     const progress = upstream.progress;
+    const row = rowFor(order.id);
+    const secrets = [row?.code,parse<Prepared>(row?.prepared ?? null)?.token,row?.claim_token,response.claimToken]
+      .filter((value): value is string => typeof value === 'string' && !!value);
+    const automation = record(upstream.automation);
+    const reason = [record(upstream.failure).message,upstream.paymentLastError,upstream.relayMessage,
+      automation.state === 'FAILED' ? automation.message : undefined]
+      .map(value=>readableDetail(value,secrets)).find(Boolean);
     const result: RedemptionResult = {
       orderNo, state: string(upstream.orderState, 64), settlement: string(record(upstream.settlement).state, 64),
       progress: typeof progress === 'number' && Number.isFinite(progress) ? Math.max(0, Math.min(100, progress)) : null,
       renewal: string(record(upstream.renewalSetup).state, 64),
+      ...(reason ? { reason } : {}),
     };
+    const processMessage = [record(upstream.processingStage).message,automation.state !== 'FAILED' ? automation.message : undefined]
+      .map(value=>readableDetail(value,secrets)).find(Boolean);
+    if (processMessage) result.processMessage = processMessage;
+    // Sparse status responses must not erase a known explanation for the same
+    // terminal result, or carry that explanation into a later successful result.
+    const previous = parse<RedemptionResult>(row?.result ?? null);
+    if (!reason && previous?.orderNo === result.orderNo && previous.state === result.state
+      && previous.settlement === result.settlement && previous.renewal === result.renewal
+      && (result.state === 'NO_CHARGE' || result.settlement === 'NO_CHARGE')) {
+      const retained = readableDetail(previous.reason,secrets);
+      if (retained) result.reason = retained;
+    }
+    const events: RedemptionEvent[] = previous?.orderNo === orderNo ? [...previous.timeline || []] : [];
+    const timestamp = (value: unknown) => typeof value === 'string' && value.length <= 40 && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null;
+    if (Array.isArray(upstream.timeline)) for (const item of upstream.timeline.slice(-40)) {
+      const event = record(item);
+      const title = readableDetail(event.title,secrets), detail = readableDetail(event.detail,secrets);
+      if (!title && !detail) continue;
+      const next: RedemptionEvent = {title: title || '通道处理记录',detail,at: timestamp(event.at) || timestamp(event.createdAt),source:'provider'};
+      if (!events.some(entry=>entry.source === next.source && entry.at === next.at && entry.title === next.title && entry.detail === next.detail)) events.push(next);
+    }
+    const progressView = redemptionProgress(result);
+    const observed = [...events].reverse().find(event=>event.source === 'query');
+    if (observed?.title !== progressView.title || observed?.detail !== progressView.detail) {
+      events.push({title:progressView.title,detail:progressView.detail,at:new Date().toISOString(),source:'query'});
+    }
+    result.timeline = events.sort((a,b)=>(a.at || '').localeCompare(b.at || '')).slice(-40);
     db.prepare('UPDATE order_redemptions SET result = ?, claim_token = coalesce(?, claim_token) WHERE order_id = ?')
       .run(JSON.stringify(result), string(response.claimToken, 4096) || null, order.id);
   }
@@ -193,7 +241,7 @@ export function redemptionRepository(db: DatabaseSync, fetcher = fetch) {
       let prepared = parse<Prepared>(row.prepared);
       if (!prepared || Date.parse(prepared.expiresAt) <= Date.now()) {
         const result = await request('/v2/redemptions/prepare', { method: 'POST', body: JSON.stringify({ voucherCode: row.code }) });
-        if (record(result.product).id !== order.productId) {
+        if (!matchesVoucherProduct(order.productId, record(result.product).id)) {
           throw new OrderError(409, 'VOUCHER_PRODUCT_MISMATCH', '卡密对应的套餐与订单不一致，请联系客服。');
         }
         prepared = { id: string(result.redemptionId), token: string(result.redemptionToken, 4096), expiresAt: string(result.expiresAt), policy };
@@ -262,6 +310,63 @@ export function redemptionRepository(db: DatabaseSync, fetcher = fetch) {
   return {
     view,
     policy: getPolicy,
+    reclaim(order: Order, actor: string, expectedVoucherCode: unknown, authorize = () => {}) {
+      return exclusive(order, async () => {
+        authorize();
+        const done = () => db.prepare(`SELECT 1 FROM order_fulfillment_details f JOIN orders o ON o.id=f.order_id
+          WHERE f.order_id=? AND f.reclaimed_at IS NOT NULL AND o.environment=?
+          AND json_extract(o.snapshot,'$.staffCheckout')=1`).get(order.id,order.environment);
+        if (done()) return { reclaimed: true as const };
+        if (!available()) throw new OrderError(503,'REDEMPTION_DISABLED','充值通道未开启，暂时无法核实卡密是否未使用。');
+        const invalid = () => new OrderError(409,'VOUCHER_CANNOT_RECLAIM','仅尚未成功充值、未被取消且有卡密的免付开通订单可回收；正在验证或提交时请稍后重试。');
+        const lease = Date.now()+90000;
+        db.exec('BEGIN IMMEDIATE');
+        let reserved: NonNullable<ReturnType<typeof reclaimableStaffVoucher>>;
+        try {
+          const candidate = reclaimableStaffVoucher(db,order.id,order.environment);
+          if (!candidate) throw invalid();
+          if (typeof expectedVoucherCode !== 'string' || candidate.code !== expectedVoucherCode) {
+            throw new OrderError(409,'VOUCHER_REFERENCE_CHANGED','卡密信息已变化，请刷新订单后重新核对。');
+          }
+          reserved = candidate;
+          db.prepare('UPDATE order_redemptions SET preview_until=? WHERE order_id=?').run(lease,order.id);
+          db.exec('COMMIT');
+        } catch (error) { db.exec('ROLLBACK'); throw error; }
+        try {
+          const response = await request('/v2/status/by-voucher',{method:'POST',body:JSON.stringify({voucherCode:reserved.code})},[String(reserved.code)]);
+          const voucher = record(response.voucher), upstream = record(response.order);
+          const settlement = record(upstream.settlement).state, renewal = record(upstream.renewalSetup).state;
+          const noOrder = response.order == null;
+          const terminalNoCharge = settlement === 'NO_CHARGE' && ['NO_CHARGE','CANCELED'].includes(String(upstream.orderState));
+          const sameSubmission = !reserved.submitted || !!reserved.submitted_order_no && upstream.orderNo === reserved.submitted_order_no;
+          if (voucher.state !== 'AVAILABLE' || !matchesVoucherProduct(order.productId,record(voucher.product).id)
+            || upstream.orderState === 'FULFILLED' || settlement === 'PAID' || renewal === 'paid' || renewal === 'ready'
+            || !sameSubmission || (reserved.submitted ? !terminalNoCharge : !noOrder && !terminalNoCharge)) {
+            throw new OrderError(409,'VOUCHER_NOT_UNUSED','卡密已使用、充值仍在处理或结果尚未确认，不能回收。请刷新充值状态后重试。');
+          }
+          db.exec('BEGIN IMMEDIATE');
+          try {
+            authorize();
+            const held = db.prepare('UPDATE order_redemptions SET preview_until=0 WHERE order_id=? AND voucher_id=? AND preview_until=? AND preview_until>?')
+              .run(order.id,reserved.voucher_id,lease,Date.now());
+            const current = reclaimableStaffVoucher(db,order.id,order.environment);
+            if (!held.changes || !current || current.voucher_id !== reserved.voucher_id || current.code !== reserved.code
+              || current.submitted !== reserved.submitted || current.submitted_order_no !== reserved.submitted_order_no) throw invalid();
+            const at = new Date().toISOString();
+            db.prepare(`INSERT INTO order_fulfillment_details(order_id,voucher_id,voucher_code,reclaimed_at,reclaimed_by)
+              VALUES (?,?,?,?,?) ON CONFLICT(order_id) DO UPDATE SET voucher_id=excluded.voucher_id,voucher_code=excluded.voucher_code,
+                reclaimed_at=excluded.reclaimed_at,reclaimed_by=excluded.reclaimed_by`).run(order.id,reserved.voucher_id,reserved.code,at,actor);
+            db.prepare("UPDATE orders SET status='closed' WHERE id=? AND status='paid'").run(order.id);
+            db.prepare('DELETE FROM staff_redemption_previews WHERE order_id=?').run(order.id);
+            db.prepare('DELETE FROM order_redemptions WHERE order_id=? AND voucher_id=?').run(order.id,reserved.voucher_id);
+            db.exec('COMMIT');
+          } catch (error) { db.exec('ROLLBACK'); throw error; }
+          return { reclaimed: true as const };
+        } finally {
+          db.prepare('UPDATE order_redemptions SET preview_until=0 WHERE order_id=? AND preview_until=?').run(order.id,lease);
+        }
+      },true);
+    },
     preview(order: Order, input: Record<string, unknown>) {
       return exclusive(order, () => previewAccount(order, input));
     },
@@ -312,7 +417,7 @@ export function redemptionRepository(db: DatabaseSync, fetcher = fetch) {
         const next = parse<RedemptionResult>(rowFor(order.id)?.result ?? null);
         if (opened(next)) return { state:'fulfilled' as const,voucherId:Number(lease.voucher_id) };
         const voucher = record(response.voucher);
-        if (record(voucher.product).id && record(voucher.product).id !== order.productId) return {state:'uncertain' as const,voucherId:Number(lease.voucher_id)};
+        if (record(voucher.product).id && !matchesVoucherProduct(order.productId, record(voucher.product).id)) return {state:'uncertain' as const,voucherId:Number(lease.voucher_id)};
         const reusable = voucher.state === 'AVAILABLE';
         const noCharge = record(upstream.settlement).state === 'NO_CHARGE';
         const safe = reusable && (row.submitted ? !!row.submitted_order_no && upstream.orderNo === row.submitted_order_no && noCharge : !response.order || noCharge);

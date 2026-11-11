@@ -4,6 +4,7 @@ export const adminPermissions = {
   'coupons.manage': '管理优惠券',
   'orders.view': '查看订单管理',
   'orders.refund': '审核订单退款',
+  'orders.reclaim': '回收免付订单卡密',
   'revenue.view': '查看营业额统计',
   'withdrawals.manage': '审核提现与打款',
   'referrals.view': '查看邀请返利',
@@ -19,6 +20,7 @@ export type AdminPermission = keyof typeof adminPermissions;
 export function impliedAdminPermissions(permissions: readonly AdminPermission[]): AdminPermission[] {
   const implied: AdminPermission[] = [];
   if (permissions.includes('orders.refund')) implied.push('orders.view');
+  if (permissions.includes('orders.reclaim')) implied.push('orders.view', 'vouchers.codes', 'vouchers.view');
   if (permissions.includes('withdrawals.manage')) implied.push('referrals.view');
   if (permissions.includes('vouchers.delete')) implied.push('vouchers.codes');
   if (permissions.some(permission => permission === 'vouchers.codes' || permission === 'vouchers.delete' || permission === 'vouchers.import')) implied.push('vouchers.view');
@@ -59,6 +61,7 @@ export type AdminOrderList = {
     id: string; productId: string; productName: string; category: string; voucherCode: string | null; rechargeEmail: string | null;
     status: 'pending' | 'paid' | 'closed' | 'cancelled'; cancellationMessage: string; priceCents: number;
     recharge?: Order['recharge']; cancellation?: Order['cancellation'];
+    canReclaimVoucher?: boolean;
     createdAt: string; paidAt: string | null; expiresAt: string;
     tradeNo: string | null; staffCheckout: boolean; paymentType: OrderPaymentType; refundedCents: number;
     refundReview: OrderRefundReview | null;

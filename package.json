@@ -17,7 +17,7 @@
     "test:environment": "node scripts/run.mjs --test server/environment.test.ts",
     "catalog": "node scripts/run.mjs server/catalog-cli.ts",
     "admin": "node scripts/run.mjs server/admin-cli.ts",
-    "test:api": "node scripts/run.mjs --test server/api.test.ts server/payments.test.ts server/admin.test.ts server/redemptions.test.ts server/referrals.test.ts server/withdrawals.test.ts server/order-timeouts.test.ts",
+    "test:api": "node scripts/run.mjs --test server/api.test.ts server/payments.test.ts server/admin.test.ts server/redemptions.test.ts server/referrals.test.ts server/withdrawals.test.ts server/order-timeouts.test.ts server/voucher-reclaims.test.ts",
     "test:runtime": "node scripts/run.mjs --test scripts/runtime.test.mjs",
     "test:dev": "node scripts/run.mjs --test scripts/dev.test.mjs",
     "build": "node scripts/run.mjs node_modules/typescript/bin/tsc -b && node scripts/run.mjs node_modules/vite/bin/vite.js build",

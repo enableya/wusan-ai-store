@@ -557,6 +557,7 @@ test('order reads expose the actual recharge email only after subscription succe
   for (const [result, succeeded] of [
     [null, false], [{ state: 'QUEUED' }, false], [{ state: 'FULFILLED', settlement: 'UNKNOWN' }, false],
     [{ renewal: 'ready' }, false], [{ state: 'NO_CHARGE', settlement: 'NO_CHARGE' }, false],
+    [{ state: 'NO_CHARGE', settlement: 'NO_CHARGE', reason: '已有有效订阅，暂不能重复充值。' }, false],
     [{ state: 'FULFILLED', settlement: 'PAID' }, true], [{ renewal: 'paid' }, true],
   ] as const) {
     db.prepare('UPDATE order_redemptions SET result=? WHERE order_id=?').run(JSON.stringify(result), order.id);
@@ -566,7 +567,8 @@ test('order reads expose the actual recharge email only after subscription succe
     assert.deepEqual(list[0].fulfillment, expected);
     assert.deepEqual(detail.fulfillment, expected);
     const recharge = { submitted: true, state: result && 'state' in result ? result.state : '',
-      settlement: result && 'settlement' in result ? result.settlement : '', renewal: result && 'renewal' in result ? result.renewal : '' };
+      settlement: result && 'settlement' in result ? result.settlement : '', renewal: result && 'renewal' in result ? result.renewal : '',
+      ...(result && 'reason' in result ? {reason:result.reason} : {}) };
     assert.deepEqual(list[0].recharge, recharge);
     assert.deepEqual(detail.recharge, recharge);
     assert.doesNotMatch(JSON.stringify(list), /PRIVATE-VOUCHER|private-submit-key|private@example.com/);

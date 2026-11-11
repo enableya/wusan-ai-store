@@ -427,14 +427,62 @@ test('purchase dialog displays the order QR and confirms payment from the server
   await dialog.getByLabel('我已确认以上账号，将为此账号充值').check();
   await dialog.getByRole('button', { name: '确认并提交充值' }).click();
   await expect(dialog.locator('.purchase-dialog-steps [aria-current="step"]')).toContainText('开通结果');
-  const loading = dialog.locator('.redemption-loading');
-  await expect(loading.getByText('已受理，排队中')).toBeVisible();
-  await expect(loading.getByRole('list', { name: '充值流程' }).locator('[aria-current="step"]')).toContainText('排队受理');
-  await expect(loading).toHaveCount(0, { timeout: 15000 });
+  const resultPanel = dialog.getByRole('region',{name:'开通结果'});
+  await expect(resultPanel.locator('.redemption-progress-status')).toContainText('已受理，等待处理');
+  await expect(resultPanel.getByRole('list', { name: '充值流程' }).locator('[aria-current="step"]')).toContainText('排队受理');
+  await expect(resultPanel.locator('.redemption-progress-status')).toHaveCount(0, { timeout: 15000 });
   await expect(dialog.locator('.redemption-result-tag')).toHaveText('充值成功');
   await expect(dialog.locator('.redemption-result-email')).toContainText('buyer@example.invalid');
   await expect(page).toHaveURL(/\/products\/chatgpt-plus$/);
 });
+
+for(const width of [320,390,1440]) {
+  test(`${width}px recharge keeps processing and confirmation visible and preserves history after completion`,async({page})=>{
+    await page.clock.install();await page.setViewportSize({width,height:1000});
+    let index=0;
+    const states=[{state:'QUEUED',settlement:'UNKNOWN',progress:0},{state:'FULFILLING',settlement:'UNKNOWN',progress:60},
+      {state:'FULFILLED',settlement:'UNKNOWN',progress:100},{state:'FULFILLED',settlement:'PAID',progress:100}];
+    const timeline=[
+      {title:'排队受理',detail:'充值请求已进入通道队列。',at:'2026-11-11T00:00:00Z',source:'provider'},
+      {title:'充值处理',detail:'账号已连接，正在办理充值。',at:'2026-11-11T00:00:05Z',source:'provider'},
+      {title:'结果确认',detail:'正在核实订阅开通及结算回执。',at:'2026-11-11T00:00:10Z',source:'provider'},
+      {title:'确认完成',detail:'通道已确认充值成功。',at:'2026-11-11T00:00:15Z',source:'provider'},
+    ];
+    const view=()=>({enabled:true,submitted:true,account:null,rechargeEmail:'history@example.invalid',result:{orderNo:'HISTORY-E2E',renewal:'',...states[index],timeline:timeline.slice(0,index+1)}});
+    const path='**/api/orders/'+example.id+'/redemption';
+    await page.route('**/api/orders/'+example.id,route=>route.fulfill({json:{data:{...example,status:'paid'}}}));
+    await page.route(path,route=>route.fulfill({json:{data:view()}}));
+    await page.route(path+'/refresh',route=>{index=Math.min(index+1,3);return route.fulfill({json:{data:view()}});});
+    await page.goto('/orders/'+example.id);
+    const panel=page.getByRole('region',{name:'开通结果'}),history=panel.getByRole('region',{name:'充值处理记录'});
+    await expect(history).toContainText('充值请求已进入通道队列');
+    await expect(panel.locator('.redemption-loading')).toHaveCount(0);
+    await panel.getByRole('button',{name:'刷新充值进度',exact:true}).click();
+    await expect(panel.locator('.redemption-progress-status')).toContainText('正在充值处理');
+    await expect(history).toContainText('账号已连接，正在办理充值');
+    await panel.getByRole('button',{name:'刷新充值进度',exact:true}).click();
+    await expect(panel.locator('.redemption-progress-status')).toContainText('正在确认充值结果');
+    await expect(panel.getByRole('list',{name:'充值流程'}).locator('[aria-current="step"]')).toContainText('结果确认');
+    await expect(panel.locator('.redemption-success-banner')).toHaveCount(0);
+    await expect(history).toContainText('正在核实订阅开通及结算回执');
+    await panel.screenshot({path:`artifacts/recharge-confirming-${width}.png`});
+    await panel.getByRole('button',{name:'刷新充值进度',exact:true}).click();
+    await expect(panel.locator('.redemption-success-banner')).toHaveText('充值成功');
+    await expect(history).toContainText('正在核实订阅开通及结算回执');
+    await expect(history).toContainText('通道已确认充值成功');
+    const banner=await panel.locator('.redemption-success-banner').boundingBox();
+    expect(banner!.height).toBeLessThanOrEqual(36);expect(banner!.width).toBeLessThan((await panel.boundingBox())!.width*.75);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1)).toBe(false);
+    await panel.screenshot({path:`artifacts/recharge-history-success-${width}.png`});
+    await page.reload();await expect(history).toContainText('正在核实订阅开通及结算回执');await expect(history.locator('li')).toHaveCount(4);
+    // A poll may miss the transient confirmation status. Final provider history
+    // must still reveal that step, without delaying an already confirmed success.
+    index=1;await page.reload();await expect(panel.locator('.redemption-progress-status')).toContainText('正在充值处理');
+    index=2;await panel.getByRole('button',{name:'刷新充值进度',exact:true}).click();
+    await expect(panel.locator('.redemption-success-banner')).toHaveText('充值成功');
+    await expect(history).toContainText('正在核实订阅开通及结算回执');
+  });
+}
 
 for (const width of [390, 1440]) {
   test(`${width}px completed order shows its recharge email after reload`, async ({ page }) => {

@@ -14,7 +14,7 @@ export function openDatabase(filename: string) {
     db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
     db.exec('BEGIN IMMEDIATE');
     const version = (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
-    if (version > 21) throw new Error('Database schema is newer than this server supports.');
+    if (version > 22) throw new Error('Database schema is newer than this server supports.');
     if (version === 0) {
       db.exec(`
         CREATE TABLE products (
@@ -346,6 +346,12 @@ export function openDatabase(filename: string) {
         lease_until INTEGER NOT NULL DEFAULT 0
       ) STRICT;
       PRAGMA user_version = 21;`);
+    }
+    if (version < 22) {
+      const columns = db.prepare('PRAGMA table_info(order_fulfillment_details)').all().map(column => column.name);
+      if (!columns.includes('reclaimed_at')) db.exec('ALTER TABLE order_fulfillment_details ADD COLUMN reclaimed_at TEXT');
+      if (!columns.includes('reclaimed_by')) db.exec('ALTER TABLE order_fulfillment_details ADD COLUMN reclaimed_by TEXT');
+      db.exec('PRAGMA user_version = 22;');
     }
     db.exec('COMMIT');
     return db;

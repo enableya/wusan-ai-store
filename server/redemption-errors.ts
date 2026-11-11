@@ -20,7 +20,7 @@ const known: Record<string, [number, string]> = {
 const text = (value: unknown) => typeof value === 'string' ? value.trim() : '';
 
 // Business explanations may be shown; request credentials and raw upstream bodies must not be echoed.
-function readableDetail(value: unknown, secrets: string[]) {
+export function readableDetail(value: unknown, secrets: string[] = []) {
   const detail = text(value);
   if (!detail || detail.length > 300 || /[{}<>\[\]\r\n]|https?:\/\/|bearer\s|access[_-]?token|redemption[_-]?token|claim[_-]?token|sessionInput|voucherCode|eyJ[\w-]+\.|[A-Za-z0-9_-]{40,}/i.test(detail)
     || secrets.some(secret => secret.length > 2 && detail.includes(secret))) return '';

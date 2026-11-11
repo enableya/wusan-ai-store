@@ -13,9 +13,9 @@ const resultTags: Record<string, ResultTag> = {
   CANCELED: { label: '办理已取消，结算状态待确认', tone: 'attention' },
 };
 
-export function resultTag(result: Pick<RedemptionResult, 'state' | 'settlement' | 'renewal'> | null): ResultTag {
+export function resultTag(result: Pick<RedemptionResult, 'state' | 'settlement' | 'renewal' | 'reason'> | null): ResultTag {
   if (result?.settlement === 'PAID' || result?.renewal === 'paid') return { label: '充值成功', tone: 'success' };
-  if (result?.settlement === 'NO_CHARGE' || result?.state === 'NO_CHARGE') return { label: '充值未完成，本次未扣款', tone: 'failure' };
+  if (result?.settlement === 'NO_CHARGE' || result?.state === 'NO_CHARGE') return { label: result.reason || '充值未完成，本次未扣款', tone: 'failure' };
   if (result?.renewal === 'ready') return { label: '续费已设置，等待下个周期扣款', tone: 'progress' };
   if (result?.renewal === 'attention') return { label: '续费设置需要处理，请联系客服', tone: 'attention' };
   return resultTags[result?.state ?? ''] ?? { label: '正在等待兑换结果', tone: 'progress' };

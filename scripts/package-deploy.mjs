@@ -36,7 +36,7 @@ try {
   await lstat(join(root, 'dist/index.html'));
   for (const relative of ['package.json', 'package-lock.json', 'scripts/run.mjs', 'scripts/node-runtime.mjs', 'scripts/profile.mjs',
     'deploy/production.env.example', 'deploy/frontend.env.example', 'deploy/wusan-api.service',
-    'deploy/nginx-https.conf', 'deploy/nginx-preview.conf', 'deploy/sandbox.env.example', 'docs/deployment.md', 'docs/alipay.md', 'docs/admin.md', 'docs/orders.md', 'docs/referrals.md', 'docs/withdrawals.md', 'src/lib/order-input.ts']) await copy(relative);
+    'deploy/nginx-https.conf', 'deploy/nginx-preview.conf', 'deploy/sandbox.env.example', 'docs/deployment.md', 'docs/alipay.md', 'docs/admin.md', 'docs/orders.md', 'docs/referrals.md', 'docs/withdrawals.md', 'src/lib/order-input.ts', 'src/lib/redemption-progress.ts']) await copy(relative);
   await copyTree('dist', () => true, true);
   await copyTree('deploy/windows', () => true);
   await copy('docs/windows-migration.md');

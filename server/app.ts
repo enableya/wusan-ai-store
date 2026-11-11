@@ -182,11 +182,22 @@ export function createApiServer(db: DatabaseSync, gateway: PaymentGateway = crea
         }
         if (url.pathname === '/api/admin/orders' && reading) {
           const actor = admin.requirePermission(request, 'orders.view');
-          return send(200, { data: adminOrders.list(url.searchParams, hasAdminPermission(actor, 'vouchers.codes'), hasAdminPermission(actor, 'orders.refund')) });
+          return send(200, { data: adminOrders.list(url.searchParams, hasAdminPermission(actor, 'vouchers.codes'), hasAdminPermission(actor, 'orders.refund'), 'orders', hasAdminPermission(actor,'orders.reclaim')) });
         }
         if (url.pathname === '/api/admin/refunds' && reading) {
-          admin.requirePermission(request, 'orders.refund');
-          return send(200, { data: adminOrders.list(url.searchParams, false, true, 'refunds') });
+          const actor = admin.requirePermission(request, 'orders.refund');
+          return send(200, { data: adminOrders.list(url.searchParams, hasAdminPermission(actor, 'vouchers.codes'), true, 'refunds') });
+        }
+        const reclaimVoucher = /^\/api\/admin\/orders\/(WS[0-9a-f]{20,60})\/reclaim-voucher$/.exec(url.pathname);
+        if (reclaimVoucher && request.method === 'POST') {
+          admin.requirePermission(request,'orders.reclaim');
+          const input = await writeInput();
+          const actor = admin.requirePermission(request,'orders.reclaim');
+          rateLimit(`voucher-reclaim:${actor.username}`,20);
+          const order = orders.forAdmin(reclaimVoucher[1]);
+          return send(200,{data:await redemptions.reclaim(order,actor.username,input.expectedVoucherCode,()=>{
+            if (admin.requirePermission(request,'orders.reclaim').username !== actor.username) throw new OrderError(403,'ADMIN_PERMISSION_REQUIRED','当前账号没有此操作权限。');
+          })});
         }
         const refundReview = /^\/api\/admin\/orders\/(WS[0-9a-f]{20,60})\/refund\/(approve|reject)$/.exec(url.pathname);
         if (refundReview && request.method === 'POST') {

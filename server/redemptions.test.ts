@@ -81,7 +81,7 @@ async function checkRedemption(t: TestContext, environment: Order['environment']
 test('paid production orders redeem production vouchers and reconcile without resubmitting', t => checkRedemption(t, 'production'));
 test('paid sandbox orders redeem sandbox vouchers and reconcile without resubmitting', t => checkRedemption(t, 'sandbox'));
 
-function staffFixture(t: TestContext, overrides: { session?: typeof fetch; submit?: typeof fetch; environment?: Order['environment'] } = {}) {
+function staffFixture(t: TestContext, overrides: { prepare?: typeof fetch; session?: typeof fetch; submit?: typeof fetch; environment?: Order['environment'] } = {}) {
   const db = openDatabase(':memory:');
   t.after(() => db.close());
   const original = process.env.LOVECODEX_ENABLED;
@@ -106,6 +106,7 @@ function staffFixture(t: TestContext, overrides: { session?: typeof fetch; submi
     if (path.endsWith('/bootstrap')) return success({ policyVersions: policy });
     if (path.endsWith('/prepare')) {
       cards.push(JSON.parse(String(options?.body)).voucherCode);
+      if (overrides.prepare) return overrides.prepare(url, options);
       return success({ redemptionId: 'staff-redemption', redemptionToken: 'private-staff-redemption-token', product: { id: order.productId }, expiresAt: expires });
     }
     if (path.endsWith('/session')) {
@@ -122,6 +123,65 @@ function staffFixture(t: TestContext, overrides: { session?: typeof fetch; submi
   };
   return { db, order, input, session, calls, cards, policy, addCard, fetcher, repo: redemptionRepository(db, fetcher) };
 }
+
+const preparedProduct = (id: unknown) => Response.json({
+  ok: true, redemptionId: 'pro-redemption', redemptionToken: 'private-pro-token',
+  expiresAt: new Date(Date.now() + 600000).toISOString(), product: { id },
+});
+
+for (const productId of ['chatgpt-pro-5x', 'chatgpt-pro-5x-clp', 'chatgpt-pro-5x-egp']) {
+  for (const staffCheckout of [false, true]) {
+    test(`Pro 5x ${staffCheckout ? 'staff' : 'paid'} orders redeem the ${productId} route and reuse existing reservations`, async t => {
+      const f = staffFixture(t, { prepare: async () => preparedProduct(productId) });
+      const order: Order = { ...f.order, productId: 'chatgpt-pro-5x', staffCheckout: staffCheckout ? true : undefined };
+      f.addCard('PRO-5X-CARD', 0, order.productId);
+      // Reproduce retrying an order whose card was reserved before the mismatch error.
+      f.db.prepare(`INSERT INTO order_redemptions(order_id,voucher_id,submit_key)
+        SELECT ?,id,'existing-submit-key' FROM voucher_inventory WHERE code='PRO-5X-CARD'`).run(order.id);
+      f.addCard('NEW-PRIORITY-CARD', 1, order.productId);
+      const preview = await f.repo.preview(order, f.input);
+      const submitted = await f.repo.submit(order, preview.account!.confirmationId, f.input.sessionInput);
+      assert.equal(submitted.submitted, true);
+      assert.equal(submitted.rechargeEmail, f.session.user.email);
+      assert.deepEqual(f.cards, ['PRO-5X-CARD']);
+      await redemptionRepository(f.db, f.fetcher).submit(order, preview.account!.confirmationId, f.input.sessionInput);
+      assert.equal(f.calls.filter(path => path.endsWith('/submit')).length, 1);
+    });
+  }
+}
+
+test('Pro route matching still rejects other tiers, unknown routes and invalid product responses before sending Session', async t => {
+  for (const [local, upstream] of [
+    ['chatgpt-pro-5x', 'chatgpt-plus'], ['chatgpt-pro-5x', 'chatgpt-pro-20x'],
+    ['chatgpt-pro-5x', 'chatgpt-pro-50x-clp'], ['chatgpt-pro-5x', 'chatgpt-pro-5x-unknown'],
+    ['chatgpt-pro-5x', ''], ['chatgpt-pro-5x', null], ['chatgpt-pro-5x', undefined],
+    ['chatgpt-plus', 'chatgpt-pro-5x-clp'], ['chatgpt-pro-20x', 'chatgpt-pro-5x-egp'],
+  ] as const) {
+    const f = staffFixture(t, { prepare: async () => preparedProduct(upstream) });
+    const order: Order = { ...f.order, productId: local, staffCheckout: undefined };
+    f.addCard('WRONG-TIER-CARD', 0, order.productId);
+    await assert.rejects(f.repo.preview(order, f.input), { code: 'VOUCHER_PRODUCT_MISMATCH' });
+    assert.equal(f.repo.view(order).account, null);
+    assert.equal(f.repo.view(order).submitted, false);
+    assert.ok(f.calls.every(path => !path.endsWith('/session') && !path.endsWith('/submit')));
+  }
+});
+
+test('Pro 5x cancellation checks recognize the same confirmed routes and keep other products blocked', async t => {
+  const f = staffFixture(t);
+  const order: Order = { ...f.order, productId: 'chatgpt-pro-5x', staffCheckout: undefined };
+  f.addCard('RESERVED-PRO-CARD', 0, order.productId);
+  f.db.prepare(`INSERT INTO order_redemptions(order_id,voucher_id,submit_key)
+    SELECT ?,id,'reserved-submit-key' FROM voucher_inventory WHERE code='RESERVED-PRO-CARD'`).run(order.id);
+  for (const productId of ['chatgpt-pro-5x', 'chatgpt-pro-5x-clp', 'chatgpt-pro-5x-egp', 'chatgpt-plus', 'chatgpt-pro-20x', 'chatgpt-pro-5x-unknown']) {
+    const repo = redemptionRepository(f.db, async (_url, options) => {
+      assert.deepEqual(JSON.parse(String(options?.body)), { voucherCode: 'RESERVED-PRO-CARD' });
+      return Response.json({ ok: true, voucher: { state: 'AVAILABLE', product: { id: productId } }, order: null });
+    });
+    const result = await repo.timeoutCheck(order);
+    assert.equal(result.state, ['chatgpt-pro-5x', 'chatgpt-pro-5x-clp', 'chatgpt-pro-5x-egp'].includes(productId) ? 'safe' : 'uncertain');
+  }
+});
 
 for (const environment of ['sandbox', 'production'] as const) {
   test(`staff ${environment} preview leaves inventory untouched until final confirmation`, async t => {
@@ -153,6 +213,86 @@ for (const environment of ['sandbox', 'production'] as const) {
     assert.doesNotMatch(JSON.stringify(next), /private-staff|LATE-PRIORITY/);
   });
 }
+
+test('recharge failure reasons are persisted safely, survive reload and sparse queries, and clear on success',async t=>{
+  const reason='已有有效订阅，暂不能重复充值。';
+  let upstream:Record<string,unknown>={orderNo:'FAILED-R1',orderState:'NO_CHARGE',settlement:{state:'NO_CHARGE'},failure:{code:'ACTIVE_SUBSCRIPTION',message:reason}};
+  const f=staffFixture(t,{submit:async()=>Response.json({ok:true,order:upstream})});
+  f.addCard('FAILURE-REASON-CARD');
+  const preview=await f.repo.preview(f.order,f.input);
+  const result=await f.repo.submit(f.order,preview.account!.confirmationId,f.input.sessionInput);
+  assert.equal(result.result?.reason,reason);
+  assert.equal(redemptionRepository(f.db,f.fetcher).view(f.order).result?.reason,reason);
+  const querying:typeof fetch=async()=>Response.json({ok:true,order:upstream});
+  upstream={orderNo:'FAILED-R1',orderState:'NO_CHARGE',settlement:{state:'NO_CHARGE'}};
+  assert.equal((await redemptionRepository(f.db,querying).refresh(f.order)).result?.reason,reason);
+  upstream={orderNo:'FAILED-R1',orderState:'FULFILLED',settlement:{state:'PAID'}};
+  assert.equal((await redemptionRepository(f.db,querying).refresh(f.order)).result?.reason,undefined);
+});
+
+test('recharge processing and confirmation history persists across polling, completion and reload',async t=>{
+  const at='2026-11-11T00:00:00Z';
+  let upstream:Record<string,unknown>={orderNo:'HISTORY-R1',orderState:'QUEUED',settlement:{state:'UNKNOWN'},timeline:[{title:'排队受理',detail:'已进入充值队列',at}]};
+  const f=staffFixture(t,{submit:async()=>Response.json({ok:true,order:upstream})});
+  f.addCard('HISTORY-CARD');const preview=await f.repo.preview(f.order,f.input);
+  await f.repo.submit(f.order,preview.account!.confirmationId,f.input.sessionInput);
+  const query:typeof fetch=async()=>Response.json({ok:true,order:upstream});
+  const refresh=()=>redemptionRepository(f.db,query).refresh(f.order);
+  upstream={orderNo:'HISTORY-R1',orderState:'FULFILLING',settlement:{state:'UNKNOWN'},processingStage:{message:'已连接账号，通道正在提交充值。'}};
+  assert.equal((await refresh()).result?.processMessage,'已连接账号，通道正在提交充值。');
+  upstream={orderNo:'HISTORY-R1',orderState:'FULFILLED',settlement:{state:'UNKNOWN'},timeline:[{title:'结果确认',detail:'正在核实订阅开通及结算回执',createdAt:'2026-11-11T00:00:05Z'}]};
+  assert.equal((await refresh()).result?.settlement,'UNKNOWN');
+  upstream={orderNo:'HISTORY-R1',orderState:'FULFILLED',settlement:{state:'PAID'}};
+  const finished=await refresh(),length=finished.result!.timeline!.length;
+  assert.ok(finished.result!.timeline!.some(event=>event.title==='结果确认'&&event.detail.includes('结算回执')));
+  assert.ok(finished.result!.timeline!.some(event=>event.title==='正在确认充值结果'));
+  assert.ok(finished.result!.timeline!.some(event=>event.title==='结果确认完成'));
+  assert.equal((await refresh()).result?.timeline?.length,length,'identical polling must not duplicate history');
+  assert.deepEqual(redemptionRepository(f.db,query).view(f.order).result?.timeline,finished.result?.timeline);
+  // A sparse final result still preserves all known earlier processing records.
+  assert.ok(finished.result!.timeline!.some(event=>event.detail==='已连接账号，通道正在提交充值。'));
+});
+
+test('provider timeline entries are filtered, bounded, deduplicated and isolated to their original recharge',async t=>{
+  const safe={title:'通道回执',detail:'正在确认订阅结果',at:'2026-11-11T00:00:00Z'};
+  let upstream:Record<string,unknown>={orderNo:'SAFE-HISTORY',orderState:'FULFILLED',settlement:{state:'UNKNOWN'},timeline:[safe,safe,
+    {title:'private-staff-redemption-token',detail:'HISTORY-CARD'},
+    {title:'<script>secret</script>',detail:'accessToken=private-staff-session-token'},
+    {title:'处理中',detail:'通道正在处理',at:'private-staff-redemption-token'},
+  ]};
+  const f=staffFixture(t,{submit:async()=>Response.json({ok:true,order:upstream})});f.addCard('HISTORY-CARD');
+  const preview=await f.repo.preview(f.order,f.input);
+  const submitted=await f.repo.submit(f.order,preview.account!.confirmationId,f.input.sessionInput);
+  assert.equal(submitted.result?.timeline?.filter(event=>event.title===safe.title).length,1);
+  assert.doesNotMatch(JSON.stringify(submitted),/private-staff|HISTORY-CARD|accessToken|<script>/);
+  const query:typeof fetch=async()=>Response.json({ok:true,order:upstream});
+  upstream={orderNo:'SAFE-HISTORY',orderState:'FULFILLED',settlement:{state:'UNKNOWN'},timeline:Array.from({length:100},(_,i)=>({title:`通道步骤 ${i}`,detail:'已收到处理回执'}))};
+  assert.ok((await redemptionRepository(f.db,query).refresh(f.order)).result!.timeline!.length<=40);
+  upstream={orderNo:'ANOTHER-HISTORY',orderState:'QUEUED',settlement:{state:'UNKNOWN'}};
+  const next=await redemptionRepository(f.db,query).refresh(f.order);
+  assert.equal(next.result?.timeline?.length,1);assert.equal(next.result?.timeline?.[0].title,'已受理，等待处理');
+});
+
+test('failure explanations use the documented fields and never persist raw credentials or unsafe upstream content',async t=>{
+  const reason='已有有效订阅，暂不能重复充值。';
+  for(const [fields,expected] of [
+    [{paymentLastError:reason},reason], [{relayMessage:reason},reason],
+    [{automation:{state:'FAILED',message:reason}},reason],
+    [{automation:{state:'RUNNING',message:reason}},undefined],
+    [{failure:{message:'private-staff-redemption-token'}},undefined],
+    [{failure:{message:'FAILURE-REASON-CARD'}},undefined],
+    [{failure:{message:'accessToken=private-staff-session-token'}},undefined],
+    [{failure:{message:'<script>alert(1)</script>'}},undefined],
+    [{failure:{message:'x'.repeat(301)}},undefined],
+    [{failure:{message:'FAILURE-REASON-CARD'},relayMessage:reason},reason],
+  ] as const) {
+    const f=staffFixture(t,{submit:async()=>Response.json({ok:true,order:{orderNo:'FAILED-R2',orderState:'NO_CHARGE',settlement:{state:'NO_CHARGE'},...fields}})});
+    f.addCard('FAILURE-REASON-CARD');const preview=await f.repo.preview(f.order,f.input);
+    const result=await f.repo.submit(f.order,preview.account!.confirmationId,f.input.sessionInput);
+    assert.equal(result.result?.reason,expected);
+    assert.doesNotMatch(JSON.stringify(result),/private-staff|FAILURE-REASON-CARD|accessToken|<script>/);
+  }
+});
 
 test('staff confirmations are bound to the exact Session and expire without allocating a voucher', async t => {
   const f = staffFixture(t);

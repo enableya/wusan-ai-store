@@ -4,17 +4,18 @@ import type { AdminOrderList, OrderPaymentType, OrderRefundReview } from '../src
 import { chinaDay } from './analytics.ts';
 import { OrderError } from './orders.ts';
 import { cancellationView } from './order-timeout-state.ts';
+import { reclaimableStaffVoucher } from './staff-voucher-reclaim.ts';
 
 const validDay = (day: string) => /^\d{4}-\d{2}-\d{2}$/.test(day) && Number.isFinite(Date.parse(day)) && new Date(day).toISOString().slice(0, 10) === day;
 // New orders preserve the purchased category; old snapshots fall back to the catalog, including inactive products.
 const categorySql = "COALESCE(json_extract(o.snapshot, '$.category'), p.category, 'unknown')";
 const paymentTypeSql = "CASE WHEN json_extract(o.snapshot, '$.staffCheckout') = 1 THEN 'free' ELSE 'paid' END";
-const statusSql = "CASE WHEN c.state = 'cancelled' OR (c.cancelled_at IS NOT NULL AND c.state!='fulfilled') THEN 'cancelled' ELSE o.status END";
+const statusSql = "CASE WHEN details.reclaimed_at IS NOT NULL OR c.state = 'cancelled' OR (c.cancelled_at IS NOT NULL AND c.state!='fulfilled') THEN 'cancelled' ELSE o.status END";
 const joins = "FROM orders o LEFT JOIN order_cancellations c ON c.order_id = o.id LEFT JOIN order_refund_reviews review ON review.order_id=o.id LEFT JOIN order_fulfillment_details details ON details.order_id=o.id LEFT JOIN order_redemptions redemption ON redemption.order_id=o.id LEFT JOIN products p ON p.id = json_extract(o.snapshot, '$.productId')";
 
 export function adminOrderRepository(db: DatabaseSync, environment: AdminOrderList['environment']) {
   return {
-    list(params: URLSearchParams, canViewVoucherCodes = false, canReviewRefunds = false, scope: 'orders' | 'refunds' = 'orders'): AdminOrderList {
+    list(params: URLSearchParams, canViewVoucherCodes = false, canReviewRefunds = false, scope: 'orders' | 'refunds' = 'orders', canReclaimVouchers = false): AdminOrderList {
       const invalid = () => new OrderError(400, 'INVALID_FILTER', '筛选条件无效，请检查订单号、状态和日期范围。');
       if ([...params.keys()].some(key => !['orderNo', 'status', 'start', 'end', 'category', 'productId', 'paymentType', 'refundReview', 'page'].includes(key) || params.getAll(key).length !== 1)) throw invalid();
       const orderNo = (params.get('orderNo') || '').trim();
@@ -51,7 +52,7 @@ export function adminOrderRepository(db: DatabaseSync, environment: AdminOrderLi
       const currentPage = Math.min(page, Math.max(1, Math.ceil(total / pageSize)));
       const rows = db.prepare(`SELECT ${canViewVoucherCodes ? 'details.voucher_code' : 'NULL'} AS voucherCode, details.recharge_email AS rechargeEmail, o.id, ${statusSql} AS status, c.note AS cancellationMessage, o.created_at, o.paid_at, o.expires_at, o.trade_no,
         redemption.submitted AS rechargeSubmitted, json_extract(redemption.result, '$.state') AS rechargeState,
-        json_extract(redemption.result, '$.settlement') AS rechargeSettlement, json_extract(redemption.result, '$.renewal') AS rechargeRenewal,
+        json_extract(redemption.result, '$.settlement') AS rechargeSettlement, json_extract(redemption.result, '$.renewal') AS rechargeRenewal, json_extract(redemption.result, '$.reason') AS rechargeReason,
         review.status AS reviewStatus,review.requested_at,review.reviewed_at,review.reviewed_by,review.reason AS reviewReason,
         json_extract(o.snapshot, '$.productId') AS productId, json_extract(o.snapshot, '$.productName') AS productName,
         json_extract(o.snapshot, '$.priceCents') AS priceCents, json_extract(o.snapshot, '$.staffCheckout') AS staffCheckout,
@@ -69,8 +70,9 @@ export function adminOrderRepository(db: DatabaseSync, environment: AdminOrderLi
           id: String(row.id), productId: String(row.productId), productName: String(row.productName), category: String(row.category),
           status: row.status as 'pending' | 'paid' | 'closed' | 'cancelled', cancellationMessage: String(row.cancellationMessage || ''), priceCents: Number(row.priceCents),
           cancellation: cancellationView(db, String(row.id)),
+          canReclaimVoucher: canReclaimVouchers && canViewVoucherCodes && !!reclaimableStaffVoucher(db,String(row.id),environment),
           recharge: row.status === 'paid' ? { submitted: Boolean(row.rechargeSubmitted), state: String(row.rechargeState || ''),
-            settlement: String(row.rechargeSettlement || ''), renewal: String(row.rechargeRenewal || '') } : undefined,
+            settlement: String(row.rechargeSettlement || ''), renewal: String(row.rechargeRenewal || ''), ...(row.rechargeReason ? { reason: String(row.rechargeReason) } : {}) } : undefined,
           createdAt: String(row.created_at), paidAt: row.paid_at ? String(row.paid_at) : null,
           expiresAt: String(row.expires_at), tradeNo: row.trade_no ? String(row.trade_no) : null,
           staffCheckout: row.paymentType === 'free', paymentType: row.paymentType as OrderPaymentType, refundedCents: Number(row.refundedCents),

@@ -1,5 +1,5 @@
 .refund-review-filters { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto; }
-.refund-review-table { min-width: 1500px; }
+.refund-review-table { min-width: 1700px; }
 .refund-review-table .order-refund-actions { margin: 0; }
 .refund-review-table .order-refund-cell { min-width: 180px; }
 @media (max-width: 1000px) {

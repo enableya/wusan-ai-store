@@ -12,6 +12,7 @@ import { AdminTable } from './AdminTable';
 import { DateField } from './DateField';
 import { SelectField } from './SelectField';
 import { Icon } from './Icon';
+import { ReclaimVoucherDialog } from './ReclaimVoucherDialog';
 import './admin-orders.css';
 
 const day = (offset = 0) => new Date(Date.now() + 8 * 3600000 + offset * 86400000).toISOString().slice(0, 10);
@@ -24,6 +25,7 @@ export function AdminOrders({ onExpired }: { onExpired: () => void }) {
   const [filters, setFilters] = useState(() => ({ ...initialFilters(), page: 1 }));
   const [draft, setDraft] = useState(initialFilters);
   const [products, setProducts] = useState<AdminOrderList['products']>([]);
+  const [reclaiming,setReclaiming] = useState<AdminOrderList['orders'][number] | null>(null);
   const report = useApiResource<AdminOrderList>(`/admin/orders?${new URLSearchParams({ ...filters, page: String(filters.page) })}`, { keepDataWhileReloading: true });
   const { reload, loading, error, data } = report;
   useEffect(() => { if (error?.status === 401) onExpired(); }, [error?.status, onExpired]);
@@ -83,10 +85,10 @@ export function AdminOrders({ onExpired }: { onExpired: () => void }) {
             <td className="order-id">{order.id}</td>
             <td><strong>{order.productName}</strong><small>{categoryName(order.category)}</small></td>
             <td><span className={`admin-chip ${order.paymentType === 'free' ? 'inactive' : ''}`}>{orderPaymentTypes[order.paymentType]}</span></td>
-            <td className="order-voucher-cell">{!data.canViewVoucherCodes ? <span className="admin-table-secondary">无查看权限</span> : order.voucherCode ? <><code>{order.voucherCode}</code><button type="button" className="text-button" onClick={() => void copyVoucher(order.voucherCode!)} aria-label={`复制订单 ${order.id} 的卡密`}>复制卡密</button></> : <span className="admin-table-secondary">未分配 / 未记录</span>}</td>
+            <td className="order-voucher-cell">{!data.canViewVoucherCodes ? <span className="admin-table-secondary">无查看权限</span> : order.voucherCode ? <><code>{order.voucherCode}</code><div className="order-voucher-actions"><button type="button" className="text-button" onClick={() => void copyVoucher(order.voucherCode!)} aria-label={`复制订单 ${order.id} 的卡密`}>复制卡密</button>{order.canReclaimVoucher && <button type="button" className="text-button" onClick={() => setReclaiming(order)} aria-label={`回收订单 ${order.id} 的卡密`}>回收卡密</button>}</div></> : <span className="admin-table-secondary">未分配 / 未记录</span>}</td>
             <td className="order-email-cell">{order.rechargeEmail || (order.status === 'pending' ? '尚未验证' : '未记录')}</td>
             <td className="order-recharge-cell"><span className="order-status" data-tone={orderRechargeTag(order).tone}>{orderRechargeTag(order).label}</span></td>
-            <td><span className={`order-status ${order.status}`}>{orderStatus[order.status]}</span>{order.cancellationMessage && <small>{order.cancellationMessage}</small>}{order.status === 'pending' && Date.parse(order.expiresAt) <= Date.now() && <small>付款时间已过，待核实</small>}</td>
+            <td><span className={`order-status ${order.status}`}>{order.cancellation?.voucherReclaimed ? '卡密已回收' : orderStatus[order.status]}</span>{order.cancellationMessage && <small>{order.cancellationMessage}</small>}{order.cancellation?.voucherReclaimed && <small>订单已取消</small>}{order.status === 'pending' && Date.parse(order.expiresAt) <= Date.now() && <small>付款时间已过，待核实</small>}</td>
             <td className="admin-table-number">¥{money(order.priceCents)}</td><td className="admin-table-number">¥{money(order.refundedCents)}</td>
             <td className="order-refund-cell">{order.refundReview ? <>
               <strong>{orderRefundReviewStatuses[order.refundReview.status]}</strong>
@@ -103,5 +105,6 @@ export function AdminOrders({ onExpired }: { onExpired: () => void }) {
       </section>
     </>}
     <p className="admin-method"><Icon name="info" />订单按系统已记录的支付结果显示，点击「刷新订单」获取最新状态。免付开通单会单独标记。</p>
+    {reclaiming && <ReclaimVoucherDialog order={reclaiming} onExpired={onExpired} onClose={() => setReclaiming(null)} onSaved={() => {setReclaiming(null);reload();window.dispatchEvent(new Event('wusan:orders-updated'));}} />}
   </>;
 }

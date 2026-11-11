@@ -713,6 +713,67 @@ test('a refunded timeout order is shown as canceled in the customer account and 
   }
 });
 
+test('unused staff voucher reclaim appears beside copy and cancels the order after confirmation',async({page})=>{
+  const db=openDatabase(process.env.E2E_ADMIN_DB!);
+  const now=new Date().toISOString(),token=randomBytes(32).toString('hex'),browserToken=randomBytes(32).toString('hex');
+  const owner=createHash('sha256').update(browserToken).digest('hex');
+  const ids=['WS123456789012311111111111111110','WS123456789012311111111111111111','WS123456789012311111111111111112','WS123456789012311111111111111113'];
+  for(const [i,id] of ids.entries()) {
+    const snapshot={productId:'chatgpt-plus',productName:'ChatGPT Plus',priceCents:0,periodMonths:1,details:{},...(i!==2?{staffCheckout:true}:{})};
+    db.prepare(`INSERT INTO orders(id,owner_hash,email,snapshot,status,created_at,expires_at,idempotency_key,fingerprint,environment)
+      VALUES (?,?,'',?,'paid',?,?,?,'fixture','sandbox')`).run(id,owner,JSON.stringify(snapshot),now,now,id);
+    if(i===3)continue;
+    const code='MOCK-RECLAIM-E2E-'+i;
+    const card=db.prepare("INSERT INTO voucher_inventory(product_id,environment,code,priority) VALUES ('chatgpt-plus','sandbox',?,0)").run(code);
+    db.prepare('INSERT INTO order_redemptions(order_id,voucher_id,submit_key,result) VALUES (?,?,?,?)').run(id,card.lastInsertRowid,'reclaim-'+id,i===1?JSON.stringify({settlement:'PAID'}):null);
+    db.prepare('INSERT INTO order_fulfillment_details(order_id,voucher_id,voucher_code) VALUES (?,?,?)').run(id,card.lastInsertRowid,code);
+  }
+  db.prepare('INSERT INTO admin_sessions VALUES (?,?,?)').run(createHash('sha256').update(token).digest('hex'),'admin',new Date(Date.now()+3600000).toISOString());db.close();
+  await page.context().addCookies([{name:'wusan_admin',value:token,url:'http://127.0.0.1:5210',httpOnly:true,sameSite:'Strict'},{name:'wusan_browser',value:browserToken,url:'http://127.0.0.1:5210',httpOnly:true,sameSite:'Lax'}]);
+  await page.goto('/admin?tab=orders');
+  await page.getByLabel('订单号',{exact:true}).fill('WS12345678901231111111111111111');
+  await page.getByRole('button',{name:'查询',exact:true}).click();
+  const row=page.locator('.order-table tbody tr').filter({hasText:ids[0]});
+  await expect(page.locator('.order-table tbody tr')).toHaveCount(4);
+  await expect(page.getByRole('button',{name:/回收订单 .* 的卡密/})).toHaveCount(1);
+  for(const width of [1440,390]) {
+    await page.setViewportSize({width,height:1000});
+    const copy=await row.getByRole('button',{name:`复制订单 ${ids[0]} 的卡密`,exact:true}).boundingBox();
+    const reclaim=await row.getByRole('button',{name:`回收订单 ${ids[0]} 的卡密`,exact:true}).boundingBox();
+    expect(copy).not.toBeNull();expect(reclaim!.x).toBeGreaterThanOrEqual(copy!.x+copy!.width);expect(reclaim!.y).toBe(copy!.y);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1)).toBe(false);
+  }
+  let attempts=0;
+  // The live provider contract is covered by backend tests. Keep this browser
+  // flow local and simulate a refused check followed by a confirmed reclaim.
+  await page.route(`**/api/admin/orders/${ids[0]}/reclaim-voucher`,async route=>{
+    expect(route.request().postDataJSON()).toEqual({expectedVoucherCode:'MOCK-RECLAIM-E2E-0'});
+    if(++attempts===1)return route.fulfill({status:409,json:{error:{code:'VOUCHER_NOT_UNUSED',message:'卡密仍在处理中，不能回收。'}}});
+    const update=openDatabase(process.env.E2E_ADMIN_DB!);
+    update.prepare("UPDATE orders SET status='closed' WHERE id=?").run(ids[0]);
+    update.prepare('UPDATE order_fulfillment_details SET reclaimed_at=?,reclaimed_by=? WHERE order_id=?').run(new Date().toISOString(),'admin',ids[0]);
+    update.prepare('DELETE FROM order_redemptions WHERE order_id=?').run(ids[0]);update.close();
+    return route.fulfill({json:{data:{reclaimed:true}}});
+  });
+  await row.getByRole('button',{name:`回收订单 ${ids[0]} 的卡密`,exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'回收卡密',exact:true});
+  await expect(dialog).toContainText('MOCK-RECLAIM-E2E-0');
+  await dialog.getByRole('button',{name:'确认回收并取消订单',exact:true}).click();
+  await expect(dialog.getByRole('alert')).toContainText('卡密仍在处理中');
+  await dialog.getByRole('button',{name:'确认回收并取消订单',exact:true}).click();
+  await expect(dialog).toHaveCount(0);await expect(row.locator('.order-status.cancelled')).toHaveText('卡密已回收');
+  await expect(row.getByRole('button',{name:`回收订单 ${ids[0]} 的卡密`,exact:true})).toHaveCount(0);
+  await page.reload();await expect(row).toContainText('卡密已回收');
+  await page.route('**/api/customer/session',route=>route.fulfill({json:{data:{id:'staff-mock',username:'linzhenglian',staffCheckout:true}}}));
+  await page.goto('/orders');
+  await page.getByRole('button',{name:'订单已取消',exact:true}).click();
+  const canceled=page.locator('.server-order-row').filter({hasText:ids[0]});
+  await expect(canceled.locator('.status-badge')).toHaveText('卡密已回收');
+  await canceled.getByRole('link',{name:/查看订单/}).click();
+  await expect(page.getByRole('heading',{level:1,name:'卡密已回收，订单已取消',exact:true})).toBeVisible();
+  await expect(page.getByLabel('ChatGPT Session')).toHaveCount(0);
+});
+
 test('separate refund menu defaults to pending reviews and supports approval and rejection',async({page})=>{
   const db=openDatabase(process.env.E2E_ADMIN_DB!);
   const ids=['WS1234567890123aaaaaaaaaabbbbbb','WS1234567890123aaaaaaaaaacccccc'];
@@ -726,6 +787,8 @@ test('separate refund menu defaults to pending reviews and supports approval and
     db.prepare("INSERT INTO order_cancellations(order_id,state,refund_key,note,created_at,updated_at,cancelled_at) VALUES (?,'review',?,'超过30分钟未开通会员，订单已取消，退款待后台审核；款项尚未退回。',?,?,?)").run(id,'review-'+id,now,now,now);
     db.prepare("INSERT INTO order_refund_reviews(order_id,status,requested_at) VALUES (?,'pending',?)").run(id,now);
   }
+  const code='MOCK-REFUND-VOUCHER-12345678901234567890';
+  db.prepare('INSERT INTO order_fulfillment_details(order_id,voucher_code) VALUES (?,?)').run(ids[0],code);
   const token=randomBytes(32).toString('hex');
   db.prepare('INSERT INTO admin_sessions VALUES (?,?,?)').run(createHash('sha256').update(token).digest('hex'),'admin',new Date(Date.now()+3600000).toISOString());db.close();
   await page.context().addCookies([{name:'wusan_browser',value:browserToken,url:'http://127.0.0.1:5210',httpOnly:true,sameSite:'Lax'},{name:'wusan_admin',value:token,url:'http://127.0.0.1:5210',httpOnly:true,sameSite:'Strict'}]);
@@ -740,6 +803,17 @@ test('separate refund menu defaults to pending reviews and supports approval and
   await expect(page.getByLabel('审核状态',{exact:true})).toContainText('退款待审核');
   await expect(page.locator('.order-table tbody tr')).toHaveCount(2);
   const first=page.locator('.order-table tbody tr').filter({hasText:ids[0]});
+  await expect(page.getByRole('columnheader',{name:'卡密',exact:true})).toBeVisible();
+  await expect(first.locator('.order-voucher-cell code')).toHaveText(code);
+  await expect(page.locator('.order-table tbody tr').filter({hasText:ids[1]}).locator('.order-voucher-cell')).toHaveText('未分配 / 未记录');
+  await page.context().grantPermissions(['clipboard-read','clipboard-write']);
+  await first.getByRole('button',{name:`复制订单 ${ids[0]} 的卡密`,exact:true}).click();
+  expect(await page.evaluate(()=>navigator.clipboard.readText())).toBe(code);
+  for(const width of [1440,390]) {
+    await page.setViewportSize({width,height:1000});
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1)).toBe(false);
+    await page.screenshot({path:`artifacts/refund-voucher-list-${width}.png`,fullPage:true});
+  }
   await first.getByRole('button',{name:'同意退款',exact:true}).click();
   const approval=page.getByRole('dialog',{name:'同意原路退款'});
   await expect(approval).toContainText('¥130');
@@ -770,6 +844,7 @@ test('separate refund menu defaults to pending reviews and supports approval and
   await page.getByRole('option',{name:'审核通过',exact:true}).click();
   await page.getByRole('button',{name:'查询',exact:true}).click();
   await expect(first).toContainText('人工核实未充值');
+  await expect(first.locator('.order-voucher-cell code')).toHaveText(code);
   await page.getByLabel('订单号',{exact:true}).fill(ids[1]);
   await page.getByRole('button',{name:'查询',exact:true}).click();
   await expect(page.getByText('暂无符合条件的退款审核记录。')).toBeVisible();
