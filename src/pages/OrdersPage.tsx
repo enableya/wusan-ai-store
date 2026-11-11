@@ -52,7 +52,7 @@ export default function OrdersPage() {
     </div><div className="search-field"><Icon name="search" /><input id="order-search" type="search" placeholder="搜索订单号或商品名称" aria-label="搜索订单号或商品名称" maxLength={100} value={query} onChange={(event) => setQuery(event.target.value)} /></div></div>
     <div id="order-results" aria-live="polite">{!orders.data ? <ApiState compact error={orders.error} retry={orders.reload} title="正在读取订单" /> : matching.length > 0 ? <div className="draft-list">{matching.map(order => <div className="draft-row server-order-row" key={order.id}>
       <div className="draft-info"><strong>{order.productName}</strong><span className="mono">{order.id}</span><span>{formatDate(order.createdAt)}{order.environment === 'sandbox' ? ' · 沙箱测试' : ''}</span>
-        <span className="order-recharge-status" data-tone={orderRechargeTag(order).tone}>充值状态：<span className="order-recharge-badge">{orderRechargeTag(order).label}</span></span>
+        <span className="order-recharge-status" data-tone={orderRechargeTag(order).tone}>{order.deliveryType==='voucher'?'交付状态：':'充值状态：'}<span className="order-recharge-badge">{orderRechargeTag(order).label}</span></span>
         {order.fulfillment?.status === 'succeeded' && <span className="order-recharge-email">充值邮箱：{order.fulfillment.rechargeEmail || '未记录'}</span>}
         {order.cancellation && <span className="order-cancellation-note" data-state={order.cancellation.state}>{order.cancellation.message}</span>}</div>
       <span className="draft-price">¥{money(order.priceCents)}</span><span className="status-badge pending">{orderStatusLabel(order)}</span>

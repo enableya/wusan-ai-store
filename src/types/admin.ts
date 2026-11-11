@@ -62,6 +62,7 @@ export type AdminOrderList = {
     status: 'pending' | 'paid' | 'closed' | 'cancelled'; cancellationMessage: string; priceCents: number;
     recharge?: Order['recharge']; cancellation?: Order['cancellation'];
     canReclaimVoucher?: boolean;
+    deliveryType?: Order['deliveryType']; cardDelivery?: Order['cardDelivery'];
     createdAt: string; paidAt: string | null; expiresAt: string;
     tradeNo: string | null; staffCheckout: boolean; paymentType: OrderPaymentType; refundedCents: number;
     refundReview: OrderRefundReview | null;

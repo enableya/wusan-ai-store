@@ -10,6 +10,51 @@ test.beforeAll(async () => {
   db.close();
 });
 
+test('finished-account instructions save independently of cards and appear on paid delivery',async({page})=>{
+  await page.goto('/admin?tab=vouchers');
+  await page.getByLabel('登录密码').fill('isolated-e2e-admin-password');
+  await page.getByRole('button',{name:'登录后台'}).click();
+  await page.getByRole('link',{name:'卡密管理',exact:true}).click();
+  await page.getByRole('tab',{name:'ChatGPT Plus 成品号',exact:true}).click();
+  const panel=page.getByRole('tabpanel',{name:'ChatGPT Plus 成品号',exact:true});
+  await panel.getByRole('button',{name:'编辑',exact:true}).click();
+  const instructions='1. 复制卡密。\n2. 按随卡提供的指引操作。\n<b>说明以普通文本显示</b>';
+  await panel.getByRole('textbox',{name:'使用说明',exact:true}).fill(instructions);
+  await expect(panel.getByRole('textbox',{name:'卡密',exact:true})).toHaveValue('');
+  await panel.getByRole('button',{name:'保存使用说明',exact:true}).click();
+  await expect(page.locator('.app-message--success')).toHaveText('使用说明已保存。');
+  await panel.getByRole('textbox',{name:'卡密',exact:true}).fill('MOCK-INSTRUCTIONS-ACCOUNT-CARD');
+  await panel.getByRole('button',{name:'添加卡密',exact:true}).click();
+  await expect(page.locator('.app-message--success')).toContainText('已添加 1 条');
+  await page.reload();await page.getByRole('tab',{name:'ChatGPT Plus 成品号',exact:true}).click();
+  await expect(panel.getByRole('region',{name:'使用说明',exact:true})).toContainText(instructions);
+  await panel.getByRole('button',{name:'编辑',exact:true}).click();
+  await expect(panel.getByRole('textbox',{name:'使用说明',exact:true})).toHaveValue(instructions);
+  for(const width of [390,1440]) {
+    await page.setViewportSize({width,height:1000});
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1)).toBe(false);
+    await panel.screenshot({path:`artifacts/admin-account-instructions-${width}.png`});
+  }
+  await page.request.get('/api/payments/config');
+  const token=(await page.context().cookies()).find(cookie=>cookie.name==='wusan_browser')!.value;
+  const id='WS12345678901230000000000000124',now=new Date().toISOString();
+  const db=openDatabase(process.env.E2E_ADMIN_DB!);
+  try {
+    db.prepare(`INSERT INTO orders(id,owner_hash,email,snapshot,status,created_at,expires_at,paid_at,idempotency_key,fingerprint,environment)
+      VALUES (?,?,'',?,'paid',?,?,?,?,?,'sandbox')`).run(id,createHash('sha256').update(token).digest('hex'),
+        JSON.stringify({productId:'chatgpt-plus-account',productName:'ChatGPT Plus 成品号',priceCents:8800,periodMonths:1,deliveryType:'voucher',details:{}}),now,now,now,id,'instructions-fixture');
+  } finally {db.close();}
+  await page.goto('/orders/'+id);
+  await expect(page.getByRole('region',{name:'获取卡密'})).toContainText('MOCK-INSTRUCTIONS-ACCOUNT-CARD');
+  const guidance=page.getByRole('region',{name:'使用说明',exact:true});
+  await expect(guidance).toContainText(instructions);await expect(guidance.locator('b')).toHaveCount(0);
+  for(const width of [390,1440]) {
+    await page.setViewportSize({width,height:1000});
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1)).toBe(false);
+    await page.getByRole('region',{name:'获取卡密'}).screenshot({path:`artifacts/paid-account-instructions-${width}.png`});
+  }
+});
+
 test('new product visits update live admin totals, reloads stay deduplicated and date controls align', async ({ page, browser }) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -31,7 +76,7 @@ test('new product visits update live admin totals, reloads stay deduplicated and
     await expect(page.getByLabel('数据环境')).toHaveCount(0);
     await expect(page.getByText('测试数据', { exact: true })).toBeVisible();
     await expect(page.locator('.admin-metric').first().locator('strong')).toHaveText('2');
-    await expect(page.locator('.admin-table tbody tr')).toHaveCount(4);
+    await expect(page.locator('.admin-table tbody tr')).toHaveCount(5);
     await expect(page.locator('.admin-table tbody')).toContainText('chatgpt-plus');
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: 1000 });

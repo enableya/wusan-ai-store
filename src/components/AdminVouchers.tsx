@@ -1,5 +1,5 @@
 import { useMessage } from '../app/MessageProvider';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { FormEvent, KeyboardEvent } from 'react';
 import { useApiResource } from '../hooks/useApiResource';
 import { ApiError, postApi } from '../services/api';
@@ -7,8 +7,30 @@ import { AdminVoucherCards } from './AdminVoucherCards';
 
 type Inventory = {
   environment: 'sandbox' | 'production';
-  products: { id: string; name: string; total: number; priority: number }[];
+  products: { id: string; name: string; total: number; priority: number; deliveryType?:string;usageInstructions?:string }[];
 };
+
+function VoucherInstructions({productId,value,onExpired,onSaved}:{productId:string;value:string;onExpired:()=>void;onSaved:()=>void}) {
+  const [text,setText]=useState(value),[busy,setBusy]=useState(false);
+  const message=useMessage();
+  useEffect(()=>setText(value),[value]);
+  async function save(event:FormEvent) {
+    event.preventDefault();if(busy)return;setBusy(true);
+    try {
+      const result=await postApi<{usageInstructions:string}>(`/admin/vouchers/${encodeURIComponent(productId)}/instructions`,{usageInstructions:text});
+      setText(result.usageInstructions);message.success('使用说明已保存。');onSaved();
+    } catch(cause) {
+      if(cause instanceof ApiError && cause.status===401)onExpired();
+      else message.error(cause instanceof Error?cause.message:'使用说明保存失败，请重试。');
+    } finally {setBusy(false);}
+  }
+  return <form className="admin-vouchers" onSubmit={save}><fieldset disabled={busy}>
+    <label htmlFor={`voucher-instructions-${productId}`}>使用说明</label>
+    <p className="field-hint" id={`voucher-instructions-hint-${productId}`}>当前套餐的所有卡密共用此说明，保存后显示在已付款订单的“获取卡密”步骤。留空保存可移除说明。</p>
+    <textarea id={`voucher-instructions-${productId}`} aria-describedby={`voucher-instructions-hint-${productId}`} rows={6} maxLength={4000} value={text} onChange={event=>setText(event.target.value)} placeholder="填写卡密的使用步骤、注意事项和售后指引，最多 4000 个字符。" />
+    <button type="submit" className="button primary spaced-button" disabled={busy || text===value}>{busy?'正在保存…':'保存使用说明'}</button>
+  </fieldset></form>;
+}
 
 function VoucherImport({ productId, onExpired, onImported }: { productId: string; onExpired: () => void; onImported: () => void }) {
   const [lines, setLines] = useState('');
@@ -125,6 +147,7 @@ export function AdminVouchers({ onExpired, canImport, canViewCodes, canDelete }:
           {canImport && <button className="button secondary" type="button" aria-expanded={editing === product.id}
             aria-controls={`voucher-edit-${product.id}`} onClick={() => setEditing(editing === product.id ? '' : product.id)}>{editing === product.id ? '退出编辑' : '编辑'}</button>}
         </div>
+        {product.deliveryType==='voucher' && editing!==product.id && <section className="admin-voucher-instructions" aria-label="使用说明"><h3>使用说明</h3><p>{product.usageInstructions || '暂未填写使用说明。'}</p></section>}
         {canViewCodes && product.id === active.id && editing !== product.id && <AdminVoucherCards key={imports[product.id] ?? 0} productId={product.id}
           canDelete={canDelete} onExpired={onExpired} onRemoved={inventory.reload} />}
         {canImport && <div id={`voucher-edit-${product.id}`} hidden={editing !== product.id}>
@@ -132,6 +155,7 @@ export function AdminVouchers({ onExpired, canImport, canViewCodes, canDelete }:
             setImports(previous => ({ ...previous, [product.id]: (previous[product.id] ?? 0) + 1 }));
             inventory.reload();
           }} />
+          {product.deliveryType==='voucher' && <VoucherInstructions productId={product.id} value={product.usageInstructions || ''} onExpired={onExpired} onSaved={inventory.reload} />}
         </div>}
       </section>)}
     </div>}

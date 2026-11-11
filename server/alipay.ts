@@ -140,7 +140,7 @@ export function createAlipayGateway(env: NodeJS.ProcessEnv = process.env, option
         ...(notifyUrl ? { notifyUrl } : {}),
         ...(!localLiveTest && !embedded ? { returnUrl: `${origin}/pay/${order.id}` } : {}),
         bizContent: { out_trade_no: order.id, total_amount: (order.priceCents / 100).toFixed(2),
-          subject: `${order.productName} · ${order.periodMonths} 个月`, product_code: 'FAST_INSTANT_TRADE_PAY',
+          subject: order.deliveryType === 'voucher' ? `${order.productName} · 1 份` : `${order.productName} · ${order.periodMonths} 个月`, product_code: 'FAST_INSTANT_TRADE_PAY',
           seller_id: sellerId, time_expire: timeExpire,
           ...(embedded ? { qr_pay_mode: '4', qrcode_width: '200' } : {}),
         },

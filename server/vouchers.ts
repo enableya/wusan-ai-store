@@ -3,19 +3,36 @@ import type { PaymentConfig } from '../src/types/orders.ts';
 import type { VoucherCard, VoucherPage } from '../src/types/admin.ts';
 import { OrderError } from './orders.ts';
 
-const available = `NOT EXISTS (SELECT 1 FROM order_redemptions r WHERE r.voucher_id = voucher_inventory.id)`;
+const available = `NOT EXISTS (SELECT 1 FROM order_redemptions r WHERE r.voucher_id = voucher_inventory.id)
+  AND NOT EXISTS (SELECT 1 FROM order_card_deliveries d WHERE d.voucher_id=voucher_inventory.id)`;
 const pageSize = 50;
 
 export function voucherInventory(db: DatabaseSync, environment: PaymentConfig['environment']) {
   return {
     list() {
       const products = db.prepare(`
-        SELECT p.id, p.name, count(v.id) AS total, coalesce(sum(v.priority), 0) AS priority
+        SELECT p.id, p.name, json_extract(p.presentation,'$.deliveryType') AS deliveryType,
+          coalesce((SELECT instructions FROM product_voucher_instructions i WHERE i.product_id=p.id AND i.environment=?),'') AS usageInstructions,
+          count(v.id) AS total, coalesce(sum(v.priority), 0) AS priority
         FROM products p LEFT JOIN voucher_inventory v ON v.product_id = p.id AND v.environment = ?
           AND NOT EXISTS (SELECT 1 FROM order_redemptions r WHERE r.voucher_id = v.id)
+          AND NOT EXISTS (SELECT 1 FROM order_card_deliveries d WHERE d.voucher_id=v.id)
         WHERE p.active = 1 GROUP BY p.id ORDER BY p.sort_order, p.id
-      `).all(environment);
-      return { environment, products };
+      `).all(environment,environment);
+      return { environment, products:products.map(({deliveryType,usageInstructions,...product})=>
+        deliveryType==='voucher'?{...product,deliveryType,usageInstructions}:product) };
+    },
+    saveInstructions(productId: string, input: Record<string, unknown>) {
+      if (typeof input.usageInstructions !== 'string' || input.usageInstructions.length > 4000 || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(input.usageInstructions)) {
+        throw new OrderError(400,'INVALID_USAGE_INSTRUCTIONS','使用说明最多 4000 个字符，请使用普通文本。');
+      }
+      const product = db.prepare("SELECT json_extract(presentation,'$.deliveryType') AS deliveryType FROM products WHERE id=? AND active=1").get(productId);
+      if (!product) throw new OrderError(404,'PRODUCT_NOT_FOUND','该商品不存在或已下架。');
+      if (product.deliveryType !== 'voucher') throw new OrderError(409,'NOT_CARD_PRODUCT','仅成品号卡密交付商品可设置使用说明。');
+      const usageInstructions = input.usageInstructions.replace(/\r\n?/g,'\n').trim();
+      db.prepare(`INSERT INTO product_voucher_instructions(product_id,environment,instructions) VALUES (?,?,?)
+        ON CONFLICT(product_id,environment) DO UPDATE SET instructions=excluded.instructions`).run(productId,environment,usageInstructions);
+      return {usageInstructions};
     },
     listCards(productId: string, after: number): VoucherPage {
       const rows = db.prepare(`SELECT voucher_inventory.id, code, priority, created_at AS createdAt

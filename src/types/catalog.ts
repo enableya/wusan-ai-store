@@ -13,6 +13,7 @@ export type Product = {
   features: string[];
   currency: 'CNY';
   periodMonths: number;
+  deliveryType?: 'voucher';
   details: {
     entitlements: string | null;
     deliveryMethod: string | null;

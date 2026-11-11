@@ -51,6 +51,7 @@ export function adminOrderRepository(db: DatabaseSync, environment: AdminOrderLi
       const pageSize = 20;
       const currentPage = Math.min(page, Math.max(1, Math.ceil(total / pageSize)));
       const rows = db.prepare(`SELECT ${canViewVoucherCodes ? 'details.voucher_code' : 'NULL'} AS voucherCode, details.recharge_email AS rechargeEmail, o.id, ${statusSql} AS status, c.note AS cancellationMessage, o.created_at, o.paid_at, o.expires_at, o.trade_no,
+        json_extract(o.snapshot,'$.deliveryType') AS deliveryType, EXISTS(SELECT 1 FROM order_card_deliveries d WHERE d.order_id=o.id) AS cardDelivered,
         redemption.submitted AS rechargeSubmitted, json_extract(redemption.result, '$.state') AS rechargeState,
         json_extract(redemption.result, '$.settlement') AS rechargeSettlement, json_extract(redemption.result, '$.renewal') AS rechargeRenewal, json_extract(redemption.result, '$.reason') AS rechargeReason,
         review.status AS reviewStatus,review.requested_at,review.reviewed_at,review.reviewed_by,review.reason AS reviewReason,
@@ -70,6 +71,7 @@ export function adminOrderRepository(db: DatabaseSync, environment: AdminOrderLi
           id: String(row.id), productId: String(row.productId), productName: String(row.productName), category: String(row.category),
           status: row.status as 'pending' | 'paid' | 'closed' | 'cancelled', cancellationMessage: String(row.cancellationMessage || ''), priceCents: Number(row.priceCents),
           cancellation: cancellationView(db, String(row.id)),
+          ...(row.deliveryType === 'voucher' ? {deliveryType:'voucher' as const,cardDelivery:{delivered:Boolean(row.cardDelivered)}} : {}),
           canReclaimVoucher: canReclaimVouchers && canViewVoucherCodes && !!reclaimableStaffVoucher(db,String(row.id),environment),
           recharge: row.status === 'paid' ? { submitted: Boolean(row.rechargeSubmitted), state: String(row.rechargeState || ''),
             settlement: String(row.rechargeSettlement || ''), renewal: String(row.rechargeRenewal || ''), ...(row.rechargeReason ? { reason: String(row.rechargeReason) } : {}) } : undefined,

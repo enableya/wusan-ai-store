@@ -9,6 +9,54 @@ const example: Order = {
   details: { entitlements: null, deliveryMethod: null, deliveryTime: null, accountRequirements: null, afterSales: null },
 };
 
+for(const width of [390,1440]) {
+  test(`${width}px finished account costs 88 yuan and follows information payment card delivery`,async({page})=>{
+    await page.setViewportSize({width,height:1000});
+    let order:Order={...example,productId:'chatgpt-plus-account',productName:'ChatGPT Plus 成品号',priceCents:8800,deliveryType:'voucher',cardDelivery:{delivered:false}};
+    let claims=0,redemptions=0;
+    const code='MOCK-FINISHED-ACCOUNT-CARD-1234567890123456';
+    await page.route('**/api/payments/config',route=>route.fulfill({json:{data:{enabled:true,environment:'sandbox',message:'沙箱测试'}}}));
+    await page.route('**/api/orders',route=>{
+      expect(route.request().postDataJSON()).toMatchObject({productId:'chatgpt-plus-account',expectedPriceCents:8800});
+      return route.fulfill({status:201,json:{data:order}});
+    });
+    await page.route('**/api/orders/'+order.id,route=>route.fulfill({json:{data:order}}));
+    await page.route('**/api/orders/'+order.id+'/payment-qr',route=>route.fulfill({status:503,json:{error:{message:'测试不打开实际支付网关'}}}));
+    await page.route('**/api/orders/'+order.id+'/refresh',route=>{order={...order,status:'paid',cardDelivery:{delivered:true}};return route.fulfill({json:{data:order}});});
+    await page.route('**/api/orders/'+order.id+'/card',route=>{
+      claims++;return route.fulfill({json:{data:{delivered:true,code,deliveredAt:new Date().toISOString(),usageInstructions:'1. 复制卡密。\n2. 按指引使用。<b>这是普通文本</b>'}}});
+    });
+    await page.route('**/api/orders/'+order.id+'/redemption**',route=>{redemptions++;return route.abort();});
+    await page.goto('/products/chatgpt-plus-account');
+    await expect(page.getByRole('heading',{level:1,name:'ChatGPT Plus 成品号'})).toBeVisible();
+    await expect(page.locator('.product-buy-price')).toContainText('88');
+    await expect(page.locator('.product-buy-price')).toContainText('/ 份');
+    await expect(page.locator('.item-details-content')).not.toContainText('30 天质保');
+    await page.getByLabel('验证码',{exact:true}).fill(await page.getByRole('button',{name:/点击更换/}).innerText());
+    await page.getByRole('button',{name:'立即购买',exact:true}).click();
+    const dialog=page.getByRole('dialog');
+    await expect(dialog.locator('.purchase-dialog-steps li')).toHaveCount(3);
+    await expect(dialog.locator('.purchase-dialog-steps li')).toContainText(['信息确认','确认付款','获取卡密']);
+    await dialog.getByLabel(/联系方式/).fill('account-buyer@example.invalid');await dialog.getByLabel(/查询密码/).fill('query888');
+    await dialog.getByRole('button',{name:'继续付款',exact:true}).click();
+    await expect(dialog.locator('.purchase-dialog-steps [aria-current="step"]')).toContainText('确认付款');
+    expect(claims).toBe(0);
+    await dialog.getByRole('button',{name:'刷新进度',exact:true}).click();
+    await expect(dialog.getByRole('region',{name:'获取卡密'})).toContainText(code);
+    await expect(dialog.getByRole('region',{name:'使用说明'})).toContainText('2. 按指引使用。<b>这是普通文本</b>');
+    await expect(dialog.locator('.card-usage-instructions b')).toHaveCount(0);
+    await expect(dialog.getByLabel('ChatGPT Session')).toHaveCount(0);expect(redemptions).toBe(0);
+    await page.context().grantPermissions(['clipboard-read','clipboard-write']);
+    await dialog.getByRole('button',{name:'复制卡密',exact:true}).click();expect(await page.evaluate(()=>navigator.clipboard.readText())).toBe(code);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1)).toBe(false);
+    await dialog.screenshot({path:`artifacts/finished-account-dialog-${width}.png`});
+    await dialog.getByRole('button',{name:'关闭购买弹窗',exact:true}).click();await page.goto('/orders/'+order.id);
+    await expect(page.getByRole('region',{name:'获取卡密'})).toContainText(code);
+    await expect(page.locator('.spec-list')).not.toContainText('个月');
+    await page.reload();await expect(page.getByRole('region',{name:'获取卡密'})).toContainText(code);expect(redemptions).toBe(0);
+  });
+}
+
 for (const viewport of [
   { width: 320, height: 568 }, { width: 390, height: 640 },
   { width: 1440, height: 620 }, { width: 1440, height: 1000 },

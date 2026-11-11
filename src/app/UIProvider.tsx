@@ -61,9 +61,9 @@ function Comparison({ onClose }: { onClose: () => void }) {
       <caption className="sr-only">月度订阅套餐对比</caption>
       <thead><tr><th scope="col">订阅方案</th>{products.map((product) => <th scope="col" key={product.id}>{product.name}</th>)}</tr></thead>
       <tbody>
-        <tr><th scope="row">本站售价</th>{products.map((product) => <td key={product.id}>{product.priceCents === null ? '待确认' : `¥${money(product.priceCents)}/月`}</td>)}</tr>
+        <tr><th scope="row">本站售价</th>{products.map((product) => <td key={product.id}>{product.priceCents === null ? '待确认' : `¥${money(product.priceCents)}/${product.deliveryType==='voucher'?'份':'月'}`}</td>)}</tr>
         <tr><th scope="row">适用需求</th>{products.map((product) => <td key={product.id}>{product.audience}</td>)}</tr>
-        <tr><th scope="row">订阅周期</th>{products.map((product) => <td key={product.id}>{product.periodMonths} 个月</td>)}</tr>
+        <tr><th scope="row">订阅周期 / 交付方式</th>{products.map((product) => <td key={product.id}>{product.deliveryType==='voucher'?'成品号卡密交付':`${product.periodMonths} 个月`}</td>)}</tr>
         <tr><th scope="row">具体权益</th>{products.map((product) => <td key={product.id}>{product.details.entitlements || '待供应方案确认'}</td>)}</tr>
         <tr><th scope="row">套餐状态</th>{products.map((product) => <td key={product.id}><StatusBadge product={product} /></td>)}</tr>
         <tr><th scope="row">查看方案</th>{products.map((product) => <td key={product.id}><Link className="text-button" to={`/products/${product.id}`} onClick={onClose}>查看详情 <Icon name="arrow-up-right" /></Link></td>)}</tr>

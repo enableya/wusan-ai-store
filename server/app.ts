@@ -227,6 +227,13 @@ export function createApiServer(db: DatabaseSync, gateway: PaymentGateway = crea
             return send(201, { data: vouchers.importBatch(input) });
           }
         }
+        const instructions = /^\/api\/admin\/vouchers\/([a-z0-9-]{1,80})\/instructions$/.exec(url.pathname);
+        if (instructions && request.method === 'POST') {
+          admin.requirePermission(request,'vouchers.import');
+          const input = await writeInput();
+          admin.requirePermission(request,'vouchers.import');
+          return send(200,{data:vouchers.saveInstructions(instructions[1],input)});
+        }
         const voucher = /^\/api\/admin\/vouchers\/([a-z0-9-]{1,80})\/cards(?:\/([1-9][0-9]*)\/remove)?$/.exec(url.pathname);
         if (voucher) {
           const [, productId, id] = voucher;
@@ -320,6 +327,7 @@ export function createApiServer(db: DatabaseSync, gateway: PaymentGateway = crea
       if (redemption) {
         const [, id, action] = redemption;
         const order = orders.owned(id, owner(), staffOwner());
+        if (order.deliveryType === 'voucher') return fail(409,'NOT_REDEMPTION_PRODUCT','该商品付款后获取卡密，请在订单中查看交付内容。');
         if (order.cancellation) {
           if (reading && !action) return send(200,{data:{enabled:false,submitted:false,account:null,result:null,cancellation:order.cancellation}});
           if (request.method === 'POST' && action === 'refresh') {
@@ -348,6 +356,14 @@ export function createApiServer(db: DatabaseSync, gateway: PaymentGateway = crea
           return send(200, { data });
         }
         return fail(405, 'METHOD_NOT_ALLOWED', '请求方式无效。');
+      }
+      const cardDelivery = /^\/api\/orders\/(WS[0-9a-f]{20,60})\/card$/.exec(url.pathname);
+      if (cardDelivery && request.method === 'POST') {
+        await readJson(request,gateway.origin);
+        const browser = owner(), staff = staffOwner();
+        orders.owned(cardDelivery[1],browser,staff);
+        rateLimit(`card-delivery:${browser || staff}:${cardDelivery[1]}`,30);
+        return send(200,{data:orders.claimCard(cardDelivery[1],browser,staff)});
       }
       const match = url.pathname.match(/^\/api\/orders\/(WS[0-9a-f]{20,60})(?:\/(payment|payment-qr|refresh|close|cancel))?$/);
       if (match) {

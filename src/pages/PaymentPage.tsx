@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Breadcrumb, EmptyPage, Notice, PageHeading } from '../components/Page';
 import { AccountRedemption } from '../components/AccountRedemption';
+import { CardDelivery } from '../components/CardDelivery';
 import { CancelOrderButton } from '../components/CancelOrderButton';
 import { ApiState } from '../components/ApiState';
 import { Icon } from '../components/Icon';
@@ -99,7 +100,7 @@ export default function PaymentPage() {
   if (!order) return <ApiState error={resource.error} retry={resource.reload} title="正在读取订单" />;
   const remaining = Math.max(0, Math.ceil((Date.parse(order.expiresAt) - now) / 1000));
   const canPay = order.status === 'pending' && remaining > 0 && config.data?.enabled && config.data.environment === order.environment;
-  const resultTitle = order.staffCheckout ? '连接账号' : '支付结果';
+  const resultTitle = order.deliveryType === 'voucher' ? '获取卡密' : order.staffCheckout ? '连接账号' : '支付结果';
   return <div className="container page-space">
     <Breadcrumb items={[{ label: '我的订单', to: '/orders' }, { label: order.status === 'paid' ? resultTitle : '订单与支付' }]} />
     <PageHeading title={order.cancellation?.voucherReclaimed ? '卡密已回收，订单已取消' : order.status === 'cancelled' ? '订单已取消' : order.staffCheckout ? '免付开通订单' : order.status === 'paid' ? '付款已确认' : order.status === 'closed' ? '订单已关闭' : '订单已创建，等待付款'} eyebrow="ORDER & PAYMENT" description={order.status === 'pending' ? '请核对金额后通过支付宝付款。' : undefined} />
@@ -108,7 +109,7 @@ export default function PaymentPage() {
     <div className="detail-layout"><section className="order-detail-main">
       <div className="section-heading"><h2>订单信息</h2><span className="status-badge pending">{orderStatusLabel(order)}</span></div>
       <dl className="spec-list"><div><dt>订单号</dt><dd className="mono">{order.id}</dd></div>
-        <div><dt>订阅方案</dt><dd>{order.productName}</dd></div><div><dt>周期 / 数量</dt><dd>{order.periodMonths} 个月 / 1 份</dd></div>
+        <div><dt>订阅方案</dt><dd>{order.productName}</dd></div><div><dt>{order.deliveryType==='voucher'?'购买数量':'周期 / 数量'}</dt><dd>{order.deliveryType==='voucher'?'1 份':`${order.periodMonths} 个月 / 1 份`}</dd></div>
         <div><dt>订单金额</dt><dd>¥{money(order.priceCents)}</dd></div><div><dt>创建时间</dt><dd>{formatDate(order.createdAt)}</dd></div>
         {!order.staffCheckout && <><div><dt>付款截止</dt><dd>{formatDate(order.expiresAt)}</dd></div><div><dt>支付方式</dt><dd>支付宝</dd></div></>}
         {order.paidAt && <div><dt>到账确认时间</dt><dd>{formatDate(order.paidAt)}</dd></div>}
@@ -123,7 +124,7 @@ export default function PaymentPage() {
       {order.environment === 'sandbox' && order.status === 'pending' && <p className="field-hint">请使用支付宝沙箱版和沙箱买家账号付款。</p>}
       {order.status === 'pending' && <button className="button secondary full-width spaced-button" type="button" disabled={!!busy || cancelling || !config.data?.enabled} onClick={() => void refresh()}>{busy === 'query' ? '正在查询…' : '我已付款，查询结果'}</button>}
       {order.cancellation && <Notice>{order.cancellation.message}</Notice>}
-      {order.status === 'paid' && !order.cancellation && <AccountRedemption key={order.id} orderId={order.id} productName={order.productName} onResult={onRedemptionSubmitted} onBusyChange={setRedeeming} />}
+      {order.status === 'paid' && !order.cancellation && (order.deliveryType==='voucher'?<CardDelivery key={order.id} orderId={order.id} onDelivered={onRedemptionSubmitted} />:<AccountRedemption key={order.id} orderId={order.id} productName={order.productName} onResult={onRedemptionSubmitted} onBusyChange={setRedeeming} />)}
       <CancelOrderButton order={redemptionSubmitted ? { ...order, cancelAction: null } : order} className="button secondary full-width spaced-button" disabled={!!busy || redeeming} onBusyChange={value => { setCancelling(value); lock.current = value; }} onChanged={next => { setUpdated(next); window.dispatchEvent(new Event('wusan:orders-updated')); }} />
       {(order.status === 'closed' || order.status === 'cancelled') && <Link className="button primary full-width" to={`/products/${order.productId}`}>重新选择并下单</Link>}
       <div className="order-detail-actions">

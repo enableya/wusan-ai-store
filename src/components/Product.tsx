@@ -22,7 +22,7 @@ export function Price({ product }: { product: Product }) {
     <div className="price pending-price">价格待确认</div><span className="price-caption">确认价格后开放选择</span>
   </>;
   return <><div className="price"><span className="currency">¥</span>{money(product.priceCents)}
-    <span className="period">/ 月</span></div><span className="price-caption">本站售价 · 人民币</span></>;
+    <span className="period">/ {product.deliveryType==='voucher'?'份':'月'}</span></div><span className="price-caption">本站售价 · 人民币</span></>;
 }
 
 export function SmallProductIcon({ product }: { product?: Product }) {
@@ -33,6 +33,7 @@ export function productCover(product: Product, detail = false) {
   const covers: Record<string, string> = {
     'chatgpt-plus': 'chatgpt-plus.svg', 'chatgpt-pro-5x': 'chatgpt-pro-5x.svg',
     'chatgpt-pro-20x': 'chatgpt-pro-20x.svg', 'chatgpt-pro-50x-ph': 'chatgpt-pro-50x.svg',
+    'chatgpt-plus-account':'chatgpt-plus-account.svg',
   };
   const file = covers[product.id] || 'subscription.svg';
   return `/products/${detail ? file.replace('.svg', '-detail.svg') : file}`;
@@ -62,7 +63,7 @@ export function ProductBuyPrice({ product }: { product: Product }) {
   return <div className="product-buy-price">
     <span>{staffPrice ? '免付开通' : '价格'}</span>
     <strong>{priceCents === null ? '待确认' : <><small>¥</small>{money(priceCents)}</>}</strong>
-    <span>/ {product.periodMonths} 个月</span>
+    <span>{product.deliveryType==='voucher'?'/ 份':`/ ${product.periodMonths} 个月`}</span>
   </div>;
 }
 
@@ -74,7 +75,7 @@ export function ProductCard({ product }: { product: Product }) {
     <Link className="storefront-cover" to={`/products/${product.id}`} tabIndex={-1} aria-hidden="true"><img src={cover} width="800" height="330" alt="" loading="lazy" decoding="async" /></Link>
     <div className="product-body">
       <h3><Link to={`/products/${product.id}`}>{product.name}</Link></h3>
-      <p className="storefront-card-description">{product.features[0] || '订阅服务'} · {productUsdTier(product) || `${product.periodMonths} 个月`}</p>
+      <p className="storefront-card-description">{product.features[0] || '订阅服务'} · {product.deliveryType==='voucher'?'付款后获取卡密':productUsdTier(product) || `${product.periodMonths} 个月`}</p>
       <div className="storefront-card-footer">
         <div className="card-price">
           {priceCents === null ? <span className="storefront-pending-price">价格待确认</span> : <span className="price"><span className="currency">¥</span>{amount}<small>.{fraction}</small></span>}

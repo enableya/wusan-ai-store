@@ -28,6 +28,7 @@ describe('catalog and amounts', () => {
       { id: 'chatgpt-pro-5x', priceCents: 66000, selectable: true },
       { id: 'chatgpt-pro-20x', priceCents: 115000, selectable: true },
       { id: 'chatgpt-pro-50x-ph', priceCents: 335000, selectable: true },
+      { id: 'chatgpt-plus-account', priceCents: 8800, selectable: true },
     ]);
   });
   it('formats cents consistently and resolves valid product IDs', () => {
@@ -76,7 +77,7 @@ describe('non-sensitive local selections', () => {
         productId: product.id, productName: product.name, priceCents: product.priceCents,
       });
     }
-    expect(readSelections()).toHaveLength(4);
+    expect(readSelections()).toHaveLength(5);
   });
   it('handles blocked storage and surfaces failed writes', () => {
     vi.stubGlobal('localStorage', { getItem: () => { throw new Error('blocked'); }, setItem: () => { throw new Error('blocked'); } });

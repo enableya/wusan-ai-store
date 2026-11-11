@@ -135,6 +135,7 @@
 .purchase-dialog-product p { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
 .purchase-dialog-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 16px 0 12px; margin: 16px 0 20px; border-radius: 12px; background: var(--page); list-style: none; }
 .purchase-dialog-steps[data-staff-checkout] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.purchase-dialog-steps[data-card-delivery] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .purchase-dialog-steps li { position: relative; display: grid; justify-items: center; gap: 7px; font-size: 14px; color: var(--muted); text-align: center; }
 .purchase-dialog-steps li:not(:last-child)::after { content: ''; position: absolute; top: 14px; left: calc(50% + 20px); width: calc(100% - 40px); height: 2px; background: var(--line); }
 .purchase-dialog-steps span { display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--line); border-radius: 50%; background: var(--surface); }
@@ -179,6 +180,9 @@
 .account-redemption .redemption-account-guide a:hover { text-decoration: underline; }
 .redemption-account-guide a svg { width: 13px; height: 13px; stroke-width: 2.3; }
 .account-redemption textarea { display: block; width: 100%; padding: 8px; margin-bottom: 8px; background: var(--page); color: var(--text); border: 1px solid var(--line); border-radius: 6px; }
+.card-delivery-status { display: flex; align-items: center; gap: 6px; color: light-dark(#20643c,#a0e2b8); font-size: 14px; font-weight: 600; }
+.card-delivery-status svg { width: 18px; height: 18px; }
+.delivered-voucher { display: block; margin: 12px 0; padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); font-size: 14px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; user-select: all; }
 .account-redemption .button { margin: 8px 8px 0 0; }
 .account-redemption progress { width: 100%; accent-color: var(--green); }
 .redemption-result-tag.status-badge {
@@ -315,3 +319,6 @@
 .redemption-result-panel:not(.redemption-result-dialog) .redemption-stage-list li strong { font-size: clamp(10px, 4cqi, 12px); white-space: nowrap; }
 .redemption-result-dialog .redemption-stage-list li strong { font-size: 12px; white-space: nowrap; }
 .redemption-result-panel:not(.redemption-result-dialog) .redemption-stage-list li:not(:last-child)::after { top: 14px; left: calc(50% + 17px); width: calc(100% - 34px); }
+.card-usage-instructions { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
+.card-usage-instructions h4 { margin: 0 0 8px; font-size: 15px; }
+.card-usage-instructions p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.8; }

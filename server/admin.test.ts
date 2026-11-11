@@ -228,7 +228,7 @@ test('invalid filters fail explicitly, zero-count products remain visible and ex
   const admin = await login();
   for (const query of ['start=2026-02-30', 'start=2026-01-03&end=2026-01-02', 'environment=invalid', 'environment=all&environment=sandbox', 'extra=1', 'start=2020-01-01']) assert.equal((await request('/api/admin/analytics/products?' + query, undefined, admin.cookie)).response.status, 400, query);
   const empty = (await request('/api/admin/analytics/products', undefined, admin.cookie)).json.data;
-  assert.equal(empty.total, 0); assert.equal(empty.products.length, 4); assert.ok(empty.products.every((row: { clicks: number }) => row.clicks === 0));
+  assert.equal(empty.total, 0); assert.equal(empty.products.length, 5); assert.ok(empty.products.every((row: { clicks: number }) => row.clicks === 0));
   db.prepare("UPDATE admin_sessions SET expires_at = '2000-01-01T00:00:00Z'").run();
   assert.equal((await request('/api/admin/analytics/products', undefined, admin.cookie)).response.status, 401);
   assert.equal(chinaDay(Date.parse('2026-01-01T16:00:00Z')), '2026-01-02');
@@ -248,7 +248,7 @@ test('new schema and click records survive reopening without changing existing c
     db.close(); db = openDatabase(filename);
     assert.equal(db.prepare('SELECT count(*) AS n FROM product_clicks').get()!.n, 1);
     assert.equal(db.prepare('SELECT name FROM products WHERE id = ?').get('chatgpt-plus')!.name, '商家自定义名称');
-    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 22);
+    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 24);
     const legacy = db.prepare("SELECT role, permissions, password_hash FROM admin_accounts WHERE username = 'legacy'").get()!;
     assert.equal(legacy.role, 'admin');
     assert.equal(legacy.password_hash, 'existing-password-hash');
@@ -262,6 +262,35 @@ test('HTTPS admin cookies are secure and repeated login failures are rate limite
   assert.match(result.response.headers.get('set-cookie')!, /^__Host-wusan_admin=.*; Secure$/);
   for (let i = 0; i < 11; i++) await request('/api/admin/login', { username: 'admin', password: 'bad' }, '', 'https://admin.example.com');
   assert.equal((await request('/api/admin/login', { username: 'admin', password: 'bad' }, '', 'https://admin.example.com')).response.status, 429);
+});
+
+test('finished-account usage instructions require import permission, validate input and persist per product/environment',async t=>{
+  const directory=mkdtempSync(join(tmpdir(),'wusan-instructions-')),filename=join(directory,'store.sqlite');
+  t.after(()=>rmSync(directory,{recursive:true,force:true}));
+  const {db,request,login}=await setup(t,filename);
+  const path='/api/admin/vouchers/chatgpt-plus-account/instructions';
+  const input={usageInstructions:'  第一步：复制卡密\r\n第二步：按指引使用 <b>普通文本</b>  '};
+  assert.equal((await request(path,input)).response.status,401);
+  const owner=await login();
+  insertAdminAccount(db,'instruction-viewer',await hashAdminPassword('instruction-viewer-password'),'admin',['vouchers.view']);
+  const viewer=await request('/api/admin/login',{username:'instruction-viewer',password:'instruction-viewer-password'});
+  assert.equal((await request(path,input,viewer.cookie)).response.status,403);
+  assert.equal((await request(path,input,owner.cookie,'https://evil.example')).response.status,403);
+  for(const value of [null,123,'x'.repeat(4001),'invalid\u0000text'])assert.equal((await request(path,{usageInstructions:value},owner.cookie)).response.status,400);
+  assert.equal((await request('/api/admin/vouchers/chatgpt-plus/instructions',input,owner.cookie)).response.status,409);
+  assert.equal((await request('/api/admin/vouchers/missing/instructions',input,owner.cookie)).response.status,404);
+  const normalized='第一步：复制卡密\n第二步：按指引使用 <b>普通文本</b>';
+  assert.deepEqual((await request(path,input,owner.cookie)).json.data,{usageInstructions:normalized});
+  const {voucherInventory}=await import('./vouchers.ts');
+  const sandbox=voucherInventory(db,'sandbox'),production=voucherInventory(db,'production');
+  assert.equal(sandbox.list().products.find(p=>p.id==='chatgpt-plus-account')!.usageInstructions,normalized);
+  assert.equal(production.list().products.find(p=>p.id==='chatgpt-plus-account')!.usageInstructions,'');
+  production.saveInstructions('chatgpt-plus-account',{usageInstructions:'正式环境说明'});
+  const reopened=openDatabase(filename);
+  try{assert.equal(voucherInventory(reopened,'sandbox').list().products.find(p=>p.id==='chatgpt-plus-account')!.usageInstructions,normalized);}finally{reopened.close();}
+  assert.deepEqual((await request(path,{usageInstructions:'   '},owner.cookie)).json.data,{usageInstructions:''});
+  assert.equal(production.list().products.find(p=>p.id==='chatgpt-plus-account')!.usageInstructions,'正式环境说明');
+  assert.equal(db.prepare('SELECT count(*) n FROM voucher_inventory').get()!.n,0);
 });
 
 test('voucher imports are protected, atomic, and counted by product and environment', async t => {

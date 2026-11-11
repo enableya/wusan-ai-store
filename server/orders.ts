@@ -1,4 +1,5 @@
 import { cancellationView } from './order-timeout-state.ts';
+import { deliverOrderCard } from './card-delivery.ts';
 import { randomBytes, createHash } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
@@ -45,6 +46,7 @@ function view(row: Record<string, unknown>): Order {
     ...(snapshot.couponCode && Number.isSafeInteger(snapshot.originalPriceCents) && snapshot.originalPriceCents > snapshot.priceCents
       ? { originalPriceCents: snapshot.originalPriceCents as number } : {}),
     ...(snapshot.staffCheckout === true ? { staffCheckout: true as const } : {}),
+    ...(snapshot.deliveryType === 'voucher' ? { deliveryType: 'voucher' as const } : {}),
   };
 }
 
@@ -62,9 +64,10 @@ export function orderRepository(db: DatabaseSync, gateway: PaymentGateway) {
   const toView = (row: Record<string, unknown>): Order => {
     const order = view(row);
     const cancellation = cancellationView(db, order.id);
+    if (order.deliveryType === 'voucher') order.cardDelivery = {delivered: !!db.prepare('SELECT 1 FROM order_card_deliveries WHERE order_id=?').get(order.id)};
     const fulfillment = order.status === 'paid' && !cancellation ? completedFulfillment.get(order.id) : undefined;
     if (fulfillment) order.fulfillment = { status: 'succeeded', rechargeEmail: fulfillment.recharge_email ? String(fulfillment.recharge_email) : null };
-    if (order.status === 'paid' && !cancellation) {
+    if (order.status === 'paid' && !cancellation && order.deliveryType !== 'voucher') {
       const recharge = rechargeStatus.get(order.id);
       order.recharge = { submitted: Boolean(recharge?.submitted), state: String(recharge?.state || ''),
         settlement: String(recharge?.settlement || ''), renewal: String(recharge?.renewal || ''), ...(recharge?.reason ? { reason: String(recharge.reason) } : {}) };
@@ -79,7 +82,7 @@ export function orderRepository(db: DatabaseSync, gateway: PaymentGateway) {
            OR json_extract(result,'$.renewal') IN ('paid','ready'))
           UNION ALL SELECT 1 FROM order_cancellations WHERE order_id=? AND source!='customer_unpaid'
           UNION ALL SELECT 1 FROM payment_refunds WHERE order_id=?`).get(order.id,Date.now(),order.id,order.id);
-        if (!blocked) cancelAction = 'request_refund';
+        if (!blocked && !order.cardDelivery?.delivered) cancelAction = 'request_refund';
       }
     }
     if (cancelAction && (!gateway.status.enabled || context?.appId !== gateway.appId || context?.sellerId !== gateway.sellerId)) {
@@ -133,6 +136,7 @@ export function orderRepository(db: DatabaseSync, gateway: PaymentGateway) {
       // A verified late payment always wins over a prior unpaid cancellation.
       db.prepare(`UPDATE order_cancellations SET state='fulfilled',note='已核实到账，保留已付款订单。',updated_at=?
         WHERE order_id=? AND source='customer_unpaid'`).run(new Date().toISOString(),order.id);
+      if (order.deliveryType === 'voucher') deliverOrderCard(db,order.id,environment);
     } else if (trade.trade_status === 'TRADE_CLOSED') {
       db.prepare("UPDATE orders SET status = 'closed' WHERE id = ? AND status = 'pending'").run(order.id);
     } // Pending, unknown and non-payment events never imply payment success.
@@ -144,6 +148,12 @@ export function orderRepository(db: DatabaseSync, gateway: PaymentGateway) {
         ORDER BY created_at DESC LIMIT 200`).all(environment, owner, staffOwner, owner, new Date().toISOString()).map(toView) : [];
     },
     owned,
+    claimCard(id: string, owner: string | null, staffOwner: string | null) {
+      const order = owned(id,owner,staffOwner);
+      if (order.deliveryType !== 'voucher') throw new OrderError(409,'NOT_CARD_PRODUCT','该商品不通过卡密直接交付。');
+      if (order.status !== 'paid' || order.cancellation) throw new OrderError(409,'CARD_ORDER_NOT_PAID','付款尚未确认或订单已取消，暂不能获取卡密。');
+      return deliverOrderCard(db,id,environment);
+    },
     forAdmin(id: string) {
       const row = db.prepare('SELECT * FROM orders WHERE id=? AND environment=?').get(id,environment);
       if (!row) throw new OrderError(404,'ORDER_NOT_FOUND','未找到当前环境的订单。');
@@ -216,7 +226,7 @@ export function orderRepository(db: DatabaseSync, gateway: PaymentGateway) {
       if (coupon && input.expectedDiscountCents !== coupon.discountCents) throw new OrderError(409, 'COUPON_CHANGED', '优惠券内容已变更，请重新验证后确认金额。');
       const snapshot = { productId: product.id, productName: product.name, category: product.category, priceCents: coupon?.payableCents ?? product.priceCents,
         originalPriceCents: product.priceCents, couponCode: coupon?.code, discountCents: coupon?.discountCents ?? 0,
-        periodMonths: product.periodMonths, details: product.details, payment: { appId: gateway.appId, sellerId: gateway.sellerId } };
+        periodMonths: product.periodMonths, details: product.details, ...(product.deliveryType === 'voucher' ? {deliveryType:'voucher'} : {}), payment: { appId: gateway.appId, sellerId: gateway.sellerId } };
       db.prepare(`INSERT INTO orders (id, owner_hash, email, snapshot, status, created_at, expires_at,
         idempotency_key, fingerprint, environment, contact, query_password_hash, terms_version) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, '2026-10-21')`).run(
         id, owner, /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.contact.trim()) ? input.contact.trim() : '', JSON.stringify(snapshot), createdAt, expiresAt, key, fingerprint, environment, contact, passwordHash);
@@ -243,7 +253,7 @@ export function orderRepository(db: DatabaseSync, gateway: PaymentGateway) {
       const now = new Date().toISOString();
       const snapshot = {
         productId: product.id, productName: product.name, category: product.category, priceCents: 0, originalPriceCents: product.priceCents,
-        periodMonths: product.periodMonths, details: product.details, staffCheckout: true,
+        periodMonths: product.periodMonths, details: product.details, staffCheckout: true, ...(product.deliveryType === 'voucher' ? {deliveryType:'voucher'} : {}),
       };
       // Use the existing redemption-ready state without recording a payment or a referral.
       db.prepare(`INSERT INTO orders (id, owner_hash, email, snapshot, status, created_at, expires_at,

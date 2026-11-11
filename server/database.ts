@@ -14,7 +14,7 @@ export function openDatabase(filename: string) {
     db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
     db.exec('BEGIN IMMEDIATE');
     const version = (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
-    if (version > 22) throw new Error('Database schema is newer than this server supports.');
+    if (version > 24) throw new Error('Database schema is newer than this server supports.');
     if (version === 0) {
       db.exec(`
         CREATE TABLE products (
@@ -352,6 +352,45 @@ export function openDatabase(filename: string) {
       if (!columns.includes('reclaimed_at')) db.exec('ALTER TABLE order_fulfillment_details ADD COLUMN reclaimed_at TEXT');
       if (!columns.includes('reclaimed_by')) db.exec('ALTER TABLE order_fulfillment_details ADD COLUMN reclaimed_by TEXT');
       db.exec('PRAGMA user_version = 22;');
+    }
+    if (version < 23) {
+      const product = products.find(item=>item.id==='chatgpt-plus-account')!;
+      const {id,name,category,priceCents,selectable,currency,periodMonths,...presentation} = product;
+      db.prepare(`INSERT OR IGNORE INTO products(id,name,category,price_cents,selectable,sort_order,currency,period_months,presentation)
+        VALUES (?,?,?,?,?,4,?,?,?)`).run(id,name,category,priceCents,Number(selectable),currency,periodMonths,JSON.stringify(presentation));
+      db.exec(`CREATE TABLE IF NOT EXISTS order_card_deliveries (
+        order_id TEXT PRIMARY KEY REFERENCES orders(id), voucher_id INTEGER NOT NULL UNIQUE REFERENCES voucher_inventory(id),
+        voucher_code TEXT NOT NULL, delivered_at TEXT NOT NULL
+      ) STRICT;
+      CREATE TRIGGER IF NOT EXISTS card_delivery_history AFTER INSERT ON order_card_deliveries BEGIN
+        INSERT INTO order_fulfillment_details(order_id,voucher_id,voucher_code) VALUES (NEW.order_id,NEW.voucher_id,NEW.voucher_code)
+          ON CONFLICT(order_id) DO UPDATE SET voucher_id=excluded.voucher_id,voucher_code=excluded.voucher_code;
+        DELETE FROM order_fulfillment_deadlines WHERE order_id=NEW.order_id;
+      END;
+      DROP TRIGGER IF EXISTS fulfillment_deadline_payment;
+      DROP TRIGGER IF EXISTS fulfillment_deadline_insert;
+      CREATE TRIGGER fulfillment_deadline_payment AFTER UPDATE OF status ON orders
+      WHEN NEW.status='paid' AND OLD.status!='paid' AND NEW.paid_at IS NOT NULL
+        AND COALESCE(json_extract(NEW.snapshot,'$.staffCheckout'),0)=0
+        AND COALESCE(json_extract(NEW.snapshot,'$.deliveryType'),'redemption')!='voucher' BEGIN
+        INSERT OR IGNORE INTO order_fulfillment_deadlines VALUES (NEW.id,strftime('%Y-%m-%dT%H:%M:%fZ',NEW.paid_at,'+30 minutes'));
+      END;
+      CREATE TRIGGER fulfillment_deadline_insert AFTER INSERT ON orders
+      WHEN NEW.status='paid' AND NEW.paid_at IS NOT NULL
+        AND COALESCE(json_extract(NEW.snapshot,'$.staffCheckout'),0)=0
+        AND COALESCE(json_extract(NEW.snapshot,'$.deliveryType'),'redemption')!='voucher' BEGIN
+        INSERT OR IGNORE INTO order_fulfillment_deadlines VALUES (NEW.id,strftime('%Y-%m-%dT%H:%M:%fZ',NEW.paid_at,'+30 minutes'));
+      END;
+      PRAGMA user_version=23;`);
+    }
+    if (version < 24) {
+      db.exec(`CREATE TABLE IF NOT EXISTS product_voucher_instructions (
+        product_id TEXT NOT NULL REFERENCES products(id),
+        environment TEXT NOT NULL CHECK(environment IN ('sandbox','production')),
+        instructions TEXT NOT NULL DEFAULT '' CHECK(length(instructions)<=4000),
+        PRIMARY KEY(product_id,environment)
+      ) STRICT;
+      PRAGMA user_version=24;`);
     }
     db.exec('COMMIT');
     return db;

@@ -103,6 +103,7 @@ export function redemptionRepository(db: DatabaseSync, fetcher = fetch) {
   }
 
   function assertCanRedeem(order: Order) {
+    if (db.prepare("SELECT 1 FROM orders WHERE id=? AND json_extract(snapshot,'$.deliveryType')='voucher'").get(order.id)) throw new OrderError(409,'NOT_REDEMPTION_PRODUCT','该商品通过卡密直接交付，无需提交充值账号。');
     if (db.prepare('SELECT 1 FROM order_fulfillment_details WHERE order_id=? AND reclaimed_at IS NOT NULL').get(order.id)) {
       throw new OrderError(409,'VOUCHER_ALREADY_RECLAIMED','卡密已回收，订单已取消，不能继续充值。');
     }
@@ -404,6 +405,7 @@ export function redemptionRepository(db: DatabaseSync, fetcher = fetch) {
     },
     timeoutCheck(order: Order) {
       return exclusive(order, async () => {
+        if (order.deliveryType === 'voucher') return {state:db.prepare('SELECT 1 FROM order_card_deliveries WHERE order_id=?').get(order.id) ? 'fulfilled' as const : 'safe' as const,voucherId:null};
         const row = rowFor(order.id);
         if (!row) return { state: 'safe' as const, voucherId: null };
         const lease = db.prepare('SELECT preview_until,voucher_id FROM order_redemptions WHERE order_id = ?').get(order.id)!;

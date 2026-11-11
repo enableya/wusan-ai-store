@@ -157,7 +157,7 @@ test('schema 21 migrates without changing existing fulfillment records and recla
     INSERT INTO order_fulfillment_details(order_id,voucher_code,recharge_email) VALUES ('migration-order','HISTORICAL-CARD','historical@example.invalid');`);
   db.exec("ALTER TABLE order_fulfillment_details DROP COLUMN reclaimed_at; ALTER TABLE order_fulfillment_details DROP COLUMN reclaimed_by; PRAGMA user_version=21;");
   db.close();db=openDatabase(path);
-  assert.equal(db.prepare('PRAGMA user_version').get()!.user_version,22);
+  assert.equal(db.prepare('PRAGMA user_version').get()!.user_version,24);
   const history=db.prepare('SELECT * FROM order_fulfillment_details').get()!;
   assert.equal(history.voucher_code,'HISTORICAL-CARD');assert.equal(history.recharge_email,'historical@example.invalid');assert.equal(history.reclaimed_at,null);
   db.prepare("UPDATE order_fulfillment_details SET reclaimed_at='2026-11-11T00:00:00Z',reclaimed_by='historical-admin'").run();

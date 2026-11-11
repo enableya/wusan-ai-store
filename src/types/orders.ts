@@ -12,6 +12,8 @@ export type Order = {
   originalPriceCents?: number;
   staffCheckout?: true;
   periodMonths: number;
+  deliveryType?: 'voucher';
+  cardDelivery?: { delivered: boolean };
   status: 'pending' | 'paid' | 'closed' | 'cancelled';
   fulfillment?: { status: 'succeeded'; rechargeEmail: string | null };
   recharge?: { submitted: boolean; state: string; settlement: string; renewal: string; reason?: string };

@@ -12,12 +12,18 @@ export function createOrderMock() {
       ? { id: 'mock-customer', username: 'mock-orders', inviteCode: 'mock', staffCheckout: true } : null);
     if (path === '/api/referrals/invitation' && method === 'GET') return ok(null);
     if (path === '/api/payments/config' && method === 'GET') return ok({ enabled: false, environment: 'sandbox', message: '本地模拟订单，支付与充值均关闭。' });
-    const match = /^\/api\/orders\/(WS[0-9a-f]{20,60})(?:\/(cancel|refresh|redemption))?$/.exec(path);
+    const match = /^\/api\/orders\/(WS[0-9a-f]{20,60})(?:\/(cancel|refresh|redemption|card))?$/.exec(path);
     if (!match) return fail(404, '此入口仅用于本地订单场景预览。');
     const order = state.orders.find(order => order.id === match[1]);
     if (!order || (order.staffCheckout && !state.staff)) return fail(404, '模拟订单不存在或无权访问。');
     const action = match[2];
     if (method === 'GET' && !action) return ok(order);
+    if (method === 'POST' && action === 'card') {
+      if (order.deliveryType !== 'voucher' || order.status !== 'paid' || order.cancellation) return fail(409, '模拟订单尚未付款或不支持卡密交付。');
+      order.cardDelivery = {delivered:true};
+      return ok({delivered:true,code:'MOCK-PLUS-ACCOUNT-88-TEST-ONLY',deliveredAt:order.paidAt,
+        usageInstructions:'1. 复制上方卡密，并按商家提供的兑换指引使用。\n2. 请妥善保管卡密与账号信息，不要公开分享。\n3. 如遇使用问题，请提供订单号联系客服。\n（以上为 Mock 使用说明，仅供页面预览。）'});
+    }
     if (method === 'GET' && action === 'redemption') return ok({ enabled: false,
       submitted: order.recharge?.submitted ?? false, account: null, rechargeEmail: order.fulfillment?.rechargeEmail ?? null,
       result: order.recharge?.submitted ? { ...order.recharge, orderNo: 'MOCK-RECHARGE', progress: order.fulfillment ? 100 : 0 } : null,

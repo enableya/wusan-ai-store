@@ -1,7 +1,7 @@
 import {
   ArrowLeft, ArrowLeftRight, ArrowRight, ArrowUp, ArrowUpRight, BookOpen,
   Bookmark, CalendarDays, Check, ChevronRight, CircleCheck, ClipboardList,
-  Columns3, CreditCard, FileQuestion, Headphones, Infinity, Info, Layers,
+  Columns3, Copy, CreditCard, FileQuestion, Headphones, Infinity, Info, Layers,
   ListChecks, LockKeyhole, LogIn, LogOut, Mail, Menu, MessageCircle, Monitor, Moon, Orbit,
   Package, PackageX, Plus, ReceiptText, RefreshCw, Search, SearchX, Send, Share2, ShieldCheck,
   Sparkles, Sun, SunMoon, Trash2, UserRound, X,
@@ -11,7 +11,7 @@ const icons = {
   'arrow-left': ArrowLeft, 'arrow-left-right': ArrowLeftRight, 'arrow-right': ArrowRight,
   'arrow-up': ArrowUp, 'arrow-up-right': ArrowUpRight, 'book-open': BookOpen,
   bookmark: Bookmark, 'calendar-days': CalendarDays, check: Check, 'chevron-right': ChevronRight,
-  'circle-check': CircleCheck, 'clipboard-list': ClipboardList, 'columns-3': Columns3,
+  'circle-check': CircleCheck, 'clipboard-list': ClipboardList, 'columns-3': Columns3, copy: Copy,
   'credit-card': CreditCard, 'file-question': FileQuestion, headphones: Headphones,
   infinity: Infinity, info: Info, layers: Layers, 'list-checks': ListChecks,
   'lock-keyhole': LockKeyhole, 'log-in': LogIn, 'log-out': LogOut, mail: Mail, menu: Menu, 'message-circle': MessageCircle,

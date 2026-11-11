@@ -8,6 +8,7 @@ import { Copy, X } from 'lucide-react';
 import { Icon } from './Icon';
 import { SupportButton } from './SupportButton';
 import { AccountRedemption } from './AccountRedemption';
+import { CardDelivery } from './CardDelivery';
 import { PurchaseForm, PurchaseSummary } from './PurchaseForm';
 import type { CouponQuote } from './PurchaseForm';
 import { useApiResource } from '../hooks/useApiResource';
@@ -96,7 +97,7 @@ export function ProductPurchase({ product }: { product: Product }) {
   </>;
 }
 
-function PurchaseDialog({ product, open, onClose, order, onOrder }: {
+export function PurchaseDialog({ product, open, onClose, order, onOrder }: {
   product: Product; open: boolean; onClose: () => void; order: Order | null; onOrder: (order: Order) => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -177,8 +178,9 @@ function PurchaseDialog({ product, open, onClose, order, onOrder }: {
   }
 
   const [redemptionStarted, setRedemptionStarted] = useState(false);
-  const steps = order?.staffCheckout ? ['连接账号', '开通结果'] : ['信息确认', '确认付款', '连接账号', '开通结果'];
-  const step = order?.staffCheckout ? Number(redemptionStarted) : order?.status === 'paid' ? (redemptionStarted ? 3 : 2) : order ? 1 : 0;
+  const cardProduct = (order?.deliveryType || product.deliveryType) === 'voucher';
+  const steps = cardProduct ? ['信息确认','确认付款','获取卡密'] : order?.staffCheckout ? ['连接账号', '开通结果'] : ['信息确认', '确认付款', '连接账号', '开通结果'];
+  const step = cardProduct ? order?.status === 'paid' ? redemptionStarted ? 3 : 2 : order ? 1 : 0 : order?.staffCheckout ? Number(redemptionStarted) : order?.status === 'paid' ? (redemptionStarted ? 3 : 2) : order ? 1 : 0;
   const amount = order?.priceCents ?? couponQuote?.payableCents ?? product.priceCents;
   const originalAmount = order ? order.originalPriceCents : couponQuote?.originalCents;
   const discounted = !order?.staffCheckout && amount !== null && originalAmount != null && originalAmount > amount;
@@ -191,12 +193,12 @@ function PurchaseDialog({ product, open, onClose, order, onOrder }: {
     <div className="purchase-dialog-body">
       <div className="purchase-dialog-product">
         <Icon name="package" />
-        <div><h3>{order?.productName ?? product.name}</h3><p>{order?.periodMonths ?? product.periodMonths} 个月订阅</p></div>
+        <div><h3>{order?.productName ?? product.name}</h3><p>{cardProduct?'成品号 · 卡密交付':`${order?.periodMonths ?? product.periodMonths} 个月订阅`}</p></div>
         <div className="purchase-dialog-price" aria-live="polite"><div className="purchase-dialog-price-amounts" data-discounted={discounted}>
           <strong>{amount === null ? '待确认' : `¥${money(amount)}`}</strong>
           {discounted && <del title="优惠前价格">¥{money(originalAmount)}</del>}</div><p>数量 × 1</p></div>
       </div>
-      <ol className="purchase-dialog-steps" data-staff-checkout={order?.staffCheckout}>
+      <ol className="purchase-dialog-steps" data-staff-checkout={order?.staffCheckout} data-card-delivery={cardProduct || undefined}>
         {steps.map((label, index) =>
           <li key={label} aria-current={index === step ? 'step' : undefined} data-complete={index < step || undefined}>
             <span aria-hidden="true">{index < step ? '✓' : index + 1}</span>{label}
@@ -206,7 +208,7 @@ function PurchaseDialog({ product, open, onClose, order, onOrder }: {
       {open && order?.cancellation && <section className="purchase-qr-panel" aria-label="订单取消状态"><h3>{order.status === 'cancelled' ? '订单已取消' : '超时退款处理中'}</h3><p>{order.cancellation.message}</p></section>}
       {open && order?.status === 'paid' && !order.cancellation && <>
         <p>{order.staffCheckout ? '免付开通订单已创建' : '付款已确认'}</p>
-        <AccountRedemption orderId={order.id} productName={order.productName} presentation="dialog" onResult={() => setRedemptionStarted(true)} />
+        {cardProduct?<CardDelivery orderId={order.id} onDelivered={()=>setRedemptionStarted(true)} />:<AccountRedemption orderId={order.id} productName={order.productName} presentation="dialog" onResult={() => setRedemptionStarted(true)} />}
       </>}
       {order && order.status !== 'paid' && order.status !== 'cancelled' && <section className="purchase-qr-panel" aria-label="支付宝支付">
         <header><img src="/brand/alipay.svg" alt="" width="28" height="28" /><h3>支付宝支付</h3>

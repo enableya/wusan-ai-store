@@ -29,7 +29,7 @@ function DraftDetail() {
     <Notice>此记录是套餐清单，不是付款凭证。联系邮箱未保存。</Notice>
     {catalog.error && <Notice>{catalog.error.status === 404 ? '该套餐已下架或不存在，以下保留保存时的信息。' : '最新售价暂时无法获取，以下为保存时价格。'}
       {catalog.error.status !== 404 && <button className="text-button" type="button" onClick={catalog.reload}>重试</button>}</Notice>}
-    {priceChanged && <Notice>该清单保存后套餐价格已更新，当前本站售价为 ¥{money(product.priceCents!)} / 月。<Link to={`/products/${product.id}`}>查看当前套餐</Link></Notice>}
+    {priceChanged && <Notice>该清单保存后套餐价格已更新，当前本站售价为 ¥{money(product.priceCents!)} / {product.deliveryType==='voucher'?'份':'月'}。<Link to={`/products/${product.id}`}>查看当前套餐</Link></Notice>}
     <div className="detail-layout"><section className="order-detail-main">
       <div className="section-heading"><h2>订阅信息</h2><span className="status-badge pending">套餐草稿</span></div>
       <dl className="spec-list"><div><dt>商品</dt><dd>{selection.productName}</dd></div><div><dt>周期 / 数量</dt><dd>1 个月 / 1 份</dd></div>

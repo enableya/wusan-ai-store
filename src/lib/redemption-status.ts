@@ -22,10 +22,11 @@ export function resultTag(result: Pick<RedemptionResult, 'state' | 'settlement' 
 }
 
 
-export function orderRechargeTag(order: Pick<Order, 'status' | 'cancellation' | 'fulfillment' | 'recharge'>): { label: string; tone: ResultTag['tone'] | 'neutral' } {
+export function orderRechargeTag(order: Pick<Order, 'status' | 'cancellation' | 'fulfillment' | 'recharge' | 'deliveryType' | 'cardDelivery'>): { label: string; tone: ResultTag['tone'] | 'neutral' } {
   if (order.status === 'cancelled' || order.cancellation?.cancelledAt) return { label: '已停止', tone: 'neutral' };
   if (order.cancellation) return { label: '取消核实中', tone: 'attention' };
   if (order.status !== 'paid') return { label: '未开始', tone: 'neutral' };
+  if (order.deliveryType === 'voucher') return order.cardDelivery?.delivered ? {label:'卡密已交付',tone:'success'} : {label:'待交付卡密',tone:'attention'};
   if (order.fulfillment?.status === 'succeeded') return { label: '充值成功', tone: 'success' };
   const recharge = order.recharge;
   if (!recharge) return { label: '状态待查询', tone: 'attention' };

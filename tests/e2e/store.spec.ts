@@ -2,10 +2,10 @@ import { expect, test } from '@playwright/test';
 
 test('catalog categories, search, empty state and product detail entry', async ({ page }) => {
   await page.goto('/');
-  await expect(page.locator('.product-card')).toHaveCount(4);
+  await expect(page.locator('.product-card')).toHaveCount(5);
   await expect(page.locator('.product-card img').first()).toBeVisible();
   await page.locator('[data-category="Plus"]').click();
-  await expect(page.locator('.product-card')).toHaveCount(1);
+  await expect(page.locator('.product-card')).toHaveCount(2);
   await page.locator('[data-category="Pro"]').click();
   await expect(page.locator('.product-card')).toHaveCount(3);
   await page.getByRole('searchbox', { name: '搜索商品' }).fill('20x');
@@ -14,7 +14,7 @@ test('catalog categories, search, empty state and product detail entry', async (
   await page.getByRole('searchbox', { name: '搜索商品' }).fill('missing product');
   await expect(page.getByRole('heading', { name: '没有找到相关商品' })).toBeVisible();
   await page.getByRole('button', { name: '清空筛选' }).click();
-  await expect(page.locator('.product-card')).toHaveCount(4);
+  await expect(page.locator('.product-card')).toHaveCount(5);
   await expect(page.locator('.product-card .feature-list, .product-card .status-badge')).toHaveCount(0);
   await page.locator('.product-card').first().getByRole('link', { name: '立即购买', exact: true }).click();
   await expect(page).toHaveURL(/\/products\/chatgpt-plus$/);
@@ -163,7 +163,7 @@ test('theme preference persists', async ({ page }) => {
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-  await expect(page.locator('.product-card')).toHaveCount(4);
+  await expect(page.locator('.product-card')).toHaveCount(5);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   await page.screenshot({ path: 'artifacts/react-home-dark.png', fullPage: true });
 });
@@ -191,7 +191,7 @@ test('minimal hero hides the catalog button and retains category filtering', asy
   await expect(page.getByRole('link', { name: '浏览全部商品' })).toHaveCount(0);
   await page.locator('[data-category="全部"]').click();
   await page.getByRole('button', { name: '清空搜索' }).click();
-  await expect(page.locator('.product-card')).toHaveCount(4);
+  await expect(page.locator('.product-card')).toHaveCount(5);
   await expect(page.getByRole('searchbox', { name: '搜索商品' })).toHaveValue('');
   await page.goto('/');
   await page.screenshot({ path: 'artifacts/storefront-desktop.png', fullPage: true });
@@ -224,7 +224,7 @@ for (const width of [320, 360, 390, 768, 1024, 1440, 1920]) {
       }
     }
     await page.goto('/');
-    await expect(page.locator('.product-card')).toHaveCount(4);
+    await expect(page.locator('.product-card')).toHaveCount(5);
     const cards = await page.locator('.product-card').evaluateAll((nodes) => nodes.map((node) => ({
       left: node.getBoundingClientRect().left,
       top: node.getBoundingClientRect().top,
@@ -272,7 +272,7 @@ test('homepage API failure has no local fallback and supports retry', async ({ p
   await expect(page.locator('.product-card')).toHaveCount(0);
   failing = false;
   await page.getByRole('button', { name: '重新加载' }).click();
-  await expect(page.locator('.product-card')).toHaveCount(4);
+  await expect(page.locator('.product-card')).toHaveCount(5);
 });
 
 test('product details distinguish service failure from nonexistent products', async ({ page }) => {
@@ -308,5 +308,5 @@ test('database and server sources cannot be downloaded through the frontend serv
   }
   const response = await request.get('/api/products');
   expect(response.ok()).toBe(true);
-  expect((await response.json()).data).toHaveLength(4);
+  expect((await response.json()).data).toHaveLength(5);
 });

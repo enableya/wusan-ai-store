@@ -52,8 +52,8 @@ test('health, HEAD and public response headers', async (t) => {
 test('home, product list and details use the confirmed database prices', async (t) => {
   const { get } = await setup(t);
   const { body: list } = await get('/api/products');
-  assert.deepEqual(list.data.map((product) => product.priceCents), [13000, 66000, 115000, 335000]);
-  assert.equal(list.data.length, 4);
+  assert.deepEqual(list.data.map((product) => product.priceCents), [13000, 66000, 115000, 335000, 8800]);
+  assert.equal(list.data.length, 5);
   assert.equal(list.data[0].mark, 'Plus');
   for (const product of list.data) {
     const { response, body } = await get<Product>(`/api/products/${product.id}`);
@@ -61,7 +61,7 @@ test('home, product list and details use the confirmed database prices', async (
     assert.deepEqual(body.data, product);
     assert.equal(product.currency, 'CNY');
     assert.equal(product.periodMonths, 1);
-    assert.equal(product.details.deliveryMethod, null);
+    if(product.deliveryType!=='voucher')assert.equal(product.details.deliveryMethod, null);
   }
   const { body: home } = await get<HomeData>('/api/home');
   assert.deepEqual(home.data.products, list.data);
@@ -74,7 +74,7 @@ test('home, product list and details use the confirmed database prices', async (
 
 test('category filtering and invalid parameters are handled explicitly', async (t) => {
   const { get } = await setup(t);
-  assert.equal((await get('/api/products?category=Plus')).body.data.length, 1);
+  assert.equal((await get('/api/products?category=Plus')).body.data.length, 2);
   assert.equal((await get('/api/products?category=Pro')).body.data.length, 3);
   for (const path of ['/api/products?category=bad', '/api/products?category=Pro&category=Plus', '/api/products?price=1', '/api/products/%27%20OR%201%3D1', '/api/products/%ZZ']) {
     const { response, body } = await get(path);
@@ -92,8 +92,8 @@ test('missing or unpublished products are not exposed', async (t) => {
   assert.equal((await get('/server/data/store.sqlite')).response.status, 404);
   db.prepare('UPDATE products SET active = 0 WHERE id = ?').run('chatgpt-plus');
   assert.equal((await get('/api/products/chatgpt-plus')).response.status, 404);
-  assert.equal((await get('/api/products')).body.data.length, 3);
-  assert.equal((await get<HomeData>('/api/home')).body.data.products.length, 3);
+  assert.equal((await get('/api/products')).body.data.length, 4);
+  assert.equal((await get<HomeData>('/api/home')).body.data.products.length, 4);
 });
 
 test('API never accepts public product or unsupported payment writes', async (t) => {
@@ -140,12 +140,29 @@ test('initialization is persistent and never overwrites edited data or reseeds d
     assert.equal(catalog.findProduct('chatgpt-plus')!.mark, 'Plus');
     assert.equal(catalog.findProduct('chatgpt-plus')!.label, 'Custom label');
     assert.equal(catalog.findProduct('chatgpt-pro-5x'), undefined);
-    assert.equal(catalog.listProducts().length, 3);
+    assert.equal(catalog.listProducts().length, 4);
   } finally {
     db.close();
     for (const suffix of ['', '-wal', '-shm']) rmSync(filename + suffix, { force: true });
     rmdirSync(directory);
   }
+});
+
+test('schema 22 adds the finished-account product at 88 yuan once and preserves merchant edits',()=>{
+  const directory=mkdtempSync(join(tmpdir(),'wusan-account-migration-')),filename=join(directory,'store.sqlite');
+  let db=openDatabase(filename);
+  try {
+    db.exec("DROP TRIGGER card_delivery_history; DROP TABLE order_card_deliveries; DELETE FROM products WHERE id='chatgpt-plus-account'; PRAGMA user_version=22;");
+    db.prepare("UPDATE products SET price_cents=13100 WHERE id='chatgpt-plus'").run();db.close();db=openDatabase(filename);
+    assert.equal(catalogRepository(db).findProduct('chatgpt-plus-account')!.priceCents,8800);
+    assert.equal(catalogRepository(db).findProduct('chatgpt-plus-account')!.deliveryType,'voucher');
+    assert.equal(catalogRepository(db).findProduct('chatgpt-plus')!.priceCents,13100);
+    db.prepare("UPDATE products SET price_cents=9900 WHERE id='chatgpt-plus-account'").run();db.close();db=openDatabase(filename);
+    assert.equal(catalogRepository(db).findProduct('chatgpt-plus-account')!.priceCents,9900);
+    assert.equal(db.prepare('PRAGMA foreign_key_check').all().length,0);
+    db.prepare("DELETE FROM products WHERE id='chatgpt-plus-account'").run();db.close();db=openDatabase(filename);
+    assert.equal(catalogRepository(db).findProduct('chatgpt-plus-account'),undefined);
+  }finally{db.close();rmSync(directory,{recursive:true,force:true});}
 });
 
 test('database rejects invalid prices and selectable products without a price', async (t) => {
@@ -174,7 +191,7 @@ test('payment migration updates unchanged built-in copy and preserves merchant e
     assert.equal(catalog.faqs()[0].answer, 'Merchant answer');
     assert.match(catalog.faqs()[1].answer, /支付宝网站支付/);
     assert.match(catalog.articles()[0].sections[3].text, /支付宝官方收银台/);
-    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 22);
+    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 24);
   } finally {
     db.close();
     for (const suffix of ['', '-wal', '-shm']) rmSync(filename + suffix, { force: true });

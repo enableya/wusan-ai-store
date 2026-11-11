@@ -38,6 +38,15 @@ export const products: Product[] = [
     currency: 'CNY', periodMonths: 1,
     details: { entitlements: null, deliveryMethod: null, deliveryTime: null, accountRequirements: null, afterSales: null },
   },
+  {
+    id: 'chatgpt-plus-account', name: 'ChatGPT Plus 成品号', category: 'Plus',
+    mark: '成品号', color: 'blue', icon: 'sparkles', label: '成品号',
+    description: '确认付款后获取成品号卡密，可在订单中再次查看。',
+    audience: '需要成品号的用户', priceCents: 8800, selectable: true,
+    features: ['成品号卡密交付', '付款确认后获取卡密', '支持订单查询与卡密复制'],
+    currency: 'CNY', periodMonths: 1, deliveryType: 'voucher',
+    details: { entitlements: '成品号通过卡密交付，具体账号信息与使用说明以交付内容为准。', deliveryMethod: '付款确认后在订单中获取卡密', deliveryTime: null, accountRequirements: '无需提交个人账号 Session', afterSales: null },
+  },
 ];
 
 export const findProduct = (id?: string) => products.find((product) => product.id === id);
