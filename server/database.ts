@@ -14,7 +14,7 @@ export function openDatabase(filename: string) {
     db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
     db.exec('BEGIN IMMEDIATE');
     const version = (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
-    if (version > 24) throw new Error('Database schema is newer than this server supports.');
+    if (version > 25) throw new Error('Database schema is newer than this server supports.');
     if (version === 0) {
       db.exec(`
         CREATE TABLE products (
@@ -391,6 +391,24 @@ export function openDatabase(filename: string) {
         PRIMARY KEY(product_id,environment)
       ) STRICT;
       PRAGMA user_version=24;`);
+    }
+    if (version < 25) {
+      const row = db.prepare("SELECT presentation FROM products WHERE id='chatgpt-plus-account'").get();
+      if (row) {
+        const current = JSON.parse(String(row.presentation));
+        const next = products.find(product=>product.id==='chatgpt-plus-account')!;
+        const previous = {
+          description: '确认付款后获取成品号卡密，可在订单中再次查看。',
+          features: ['成品号卡密交付', '付款确认后获取卡密', '支持订单查询与卡密复制'],
+          details: {entitlements:'成品号通过卡密交付，具体账号信息与使用说明以交付内容为准。'},
+        };
+        const updated = migrateContent(current,previous,next) as typeof current;
+        if (updated.details?.afterSales === null) updated.details.afterSales = next.details.afterSales;
+        if (JSON.stringify(updated)!==JSON.stringify(current)) {
+          db.prepare("UPDATE products SET presentation=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id='chatgpt-plus-account'").run(JSON.stringify(updated));
+        }
+      }
+      db.exec('PRAGMA user_version=25;');
     }
     db.exec('COMMIT');
     return db;

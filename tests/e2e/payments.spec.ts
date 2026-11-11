@@ -31,7 +31,7 @@ for(const width of [390,1440]) {
     await expect(page.getByRole('heading',{level:1,name:'ChatGPT Plus 成品号'})).toBeVisible();
     await expect(page.locator('.product-buy-price')).toContainText('88');
     await expect(page.locator('.product-buy-price')).toContainText('/ 份');
-    await expect(page.locator('.item-details-content')).not.toContainText('30 天质保');
+    await expect(page.locator('.item-details-content')).toContainText('提供 30 天订阅及封号质保');
     await page.getByLabel('验证码',{exact:true}).fill(await page.getByRole('button',{name:/点击更换/}).innerText());
     await page.getByRole('button',{name:'立即购买',exact:true}).click();
     const dialog=page.getByRole('dialog');

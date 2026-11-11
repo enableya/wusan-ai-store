@@ -41,11 +41,11 @@ export const products: Product[] = [
   {
     id: 'chatgpt-plus-account', name: 'ChatGPT Plus 成品号', category: 'Plus',
     mark: '成品号', color: 'blue', icon: 'sparkles', label: '成品号',
-    description: '确认付款后获取成品号卡密，可在订单中再次查看。',
+    description: '提供账号密码直接使用，提供登录教程，质保 30 天（订阅及封号）。',
     audience: '需要成品号的用户', priceCents: 8800, selectable: true,
-    features: ['成品号卡密交付', '付款确认后获取卡密', '支持订单查询与卡密复制'],
+    features: ['提供账号密码直接使用', '质保 30 天', '提供登录教程，保障订阅及封号'],
     currency: 'CNY', periodMonths: 1, deliveryType: 'voucher',
-    details: { entitlements: '成品号通过卡密交付，具体账号信息与使用说明以交付内容为准。', deliveryMethod: '付款确认后在订单中获取卡密', deliveryTime: null, accountRequirements: '无需提交个人账号 Session', afterSales: null },
+    details: { entitlements: '付款后提供 ChatGPT 账号密码，可直接登录使用，并提供登录教程。', deliveryMethod: '付款确认后在订单中获取卡密', deliveryTime: null, accountRequirements: '无需提交个人账号 Session', afterSales: '付款后提供 GPT 账号密码，可直接登录使用，并提供登录教程。提供 30 天订阅及封号质保。' },
   },
 ];
 

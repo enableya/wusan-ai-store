@@ -165,6 +165,33 @@ test('schema 22 adds the finished-account product at 88 yuan once and preserves 
   }finally{db.close();rmSync(directory,{recursive:true,force:true});}
 });
 
+test('schema 24 updates finished-account default copy while retaining merchant copy, prices and instructions',()=>{
+  const directory=mkdtempSync(join(tmpdir(),'wusan-account-copy-')),filename=join(directory,'store.sqlite');
+  let db=openDatabase(filename);
+  try {
+    const id='chatgpt-plus-account';
+    const presentation=JSON.parse(String(db.prepare('SELECT presentation FROM products WHERE id=?').get(id)!.presentation));
+    presentation.description='确认付款后获取成品号卡密，可在订单中再次查看。';
+    presentation.features=['成品号卡密交付','付款确认后获取卡密','支持订单查询与卡密复制'];
+    presentation.details.entitlements='成品号通过卡密交付，具体账号信息与使用说明以交付内容为准。';
+    presentation.details.afterSales=null;
+    db.prepare('UPDATE products SET price_cents=9900,presentation=? WHERE id=?').run(JSON.stringify(presentation),id);
+    db.prepare("INSERT INTO product_voucher_instructions VALUES (?,'sandbox','商家填写的登录教程')").run(id);
+    db.exec('PRAGMA user_version=24');db.close();db=openDatabase(filename);
+    const product=catalogRepository(db).findProduct(id)!;
+    assert.deepEqual(product.features.slice(0,2),['提供账号密码直接使用','质保 30 天']);
+    assert.equal(product.details.afterSales,'付款后提供 GPT 账号密码，可直接登录使用，并提供登录教程。提供 30 天订阅及封号质保。');
+    assert.equal(product.priceCents,9900);
+    assert.equal(db.prepare('SELECT instructions FROM product_voucher_instructions').get()!.instructions,'商家填写的登录教程');
+    const custom={...presentation,description:'商家自定义介绍',features:['自定义权益','自定义质保'],details:{...presentation.details,afterSales:'商家自定义售后'}};
+    db.prepare('UPDATE products SET presentation=? WHERE id=?').run(JSON.stringify(custom),id);
+    db.exec('PRAGMA user_version=24');db.close();db=openDatabase(filename);
+    const retained=catalogRepository(db).findProduct(id)!;
+    assert.equal(retained.description,custom.description);assert.deepEqual(retained.features,custom.features);assert.equal(retained.details.afterSales,custom.details.afterSales);
+    assert.equal(db.prepare('PRAGMA integrity_check').get()!.integrity_check,'ok');
+  }finally{db.close();rmSync(directory,{recursive:true,force:true});}
+});
+
 test('database rejects invalid prices and selectable products without a price', async (t) => {
   const { db } = await setup(t);
   for (const price of [-1, 0, 1.5, null]) {
@@ -191,7 +218,7 @@ test('payment migration updates unchanged built-in copy and preserves merchant e
     assert.equal(catalog.faqs()[0].answer, 'Merchant answer');
     assert.match(catalog.faqs()[1].answer, /支付宝网站支付/);
     assert.match(catalog.articles()[0].sections[3].text, /支付宝官方收银台/);
-    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 24);
+    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 25);
   } finally {
     db.close();
     for (const suffix of ['', '-wal', '-shm']) rmSync(filename + suffix, { force: true });

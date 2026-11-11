@@ -158,7 +158,7 @@ test('migration preserves already-paid historical orders without scheduling retr
   db.exec('DROP TRIGGER fulfillment_deadline_insert; DROP TRIGGER fulfillment_deadline_payment; DROP TABLE order_fulfillment_deadlines; DROP TABLE order_cancellations; PRAGMA user_version=15;');
   db.prepare("INSERT INTO orders(id,owner_hash,email,snapshot,status,created_at,expires_at,paid_at,idempotency_key,fingerprint,environment) VALUES ('historical','','','{}','paid','','','2020-01-01T00:00:00.000Z','','','production')").run();
   db.close();db=openDatabase(path);
-  try {assert.equal(db.prepare('SELECT count(*) n FROM order_fulfillment_deadlines').get()!.n,0);assert.equal(db.prepare('PRAGMA user_version').get()!.user_version,24);}finally{db.close();}
+  try {assert.equal(db.prepare('SELECT count(*) n FROM order_fulfillment_deadlines').get()!.n,0);assert.equal(db.prepare('PRAGMA user_version').get()!.user_version,25);}finally{db.close();}
 });
 
 test('a submitted request with no known order number never treats an older voucher order as proof of no charge',async t=>{

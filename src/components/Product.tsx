@@ -75,7 +75,7 @@ export function ProductCard({ product }: { product: Product }) {
     <Link className="storefront-cover" to={`/products/${product.id}`} tabIndex={-1} aria-hidden="true"><img src={cover} width="800" height="330" alt="" loading="lazy" decoding="async" /></Link>
     <div className="product-body">
       <h3><Link to={`/products/${product.id}`}>{product.name}</Link></h3>
-      <p className="storefront-card-description">{product.features[0] || '订阅服务'} · {product.deliveryType==='voucher'?'付款后获取卡密':productUsdTier(product) || `${product.periodMonths} 个月`}</p>
+      <p className="storefront-card-description">{product.features[0] || '订阅服务'} · {product.deliveryType==='voucher'?(product.features[1] || '付款后获取卡密'):productUsdTier(product) || `${product.periodMonths} 个月`}</p>
       <div className="storefront-card-footer">
         <div className="card-price">
           {priceCents === null ? <span className="storefront-pending-price">价格待确认</span> : <span className="price"><span className="currency">¥</span>{amount}<small>.{fraction}</small></span>}
