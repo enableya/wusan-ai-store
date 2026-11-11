@@ -99,13 +99,14 @@
 .purchase-dialog {
   width: min(580px, calc(100% - 24px)); max-height: calc(100dvh - 24px); margin: auto;
   padding: 0; border: 1px solid var(--line); border-radius: 22px; background: var(--surface);
-  color: var(--text); box-shadow: 0 24px 72px #10182b33; overflow: auto;
+  color: var(--text); box-shadow: 0 24px 72px #10182b33; overflow: hidden;
 }
+.purchase-dialog[open] { display: flex; flex-direction: column; }
 .purchase-dialog::backdrop { background: #10182b70; backdrop-filter: blur(3px); }
 .purchase-dialog-header, .purchase-dialog-product, .purchase-dialog-footer, .purchase-qr-panel > header {
   display: flex; align-items: center; gap: 12px;
 }
-.purchase-dialog-header { padding: 16px 24px; background: var(--page); border-bottom: 1px dashed var(--line); }
+.purchase-dialog-header { flex: none; padding: 16px 24px; background: var(--page); border-bottom: 1px dashed var(--line); }
 .purchase-dialog-header > div { flex: 1; min-width: 0; }
 .purchase-dialog-header h2 { margin: 0; font-size: 15px; }
 .purchase-dialog-header p { margin: 4px 0 0; overflow-wrap: anywhere; }
@@ -115,7 +116,14 @@
 }
 .purchase-dialog-icon:hover { background: var(--mint); }
 .purchase-dialog-icon svg { width: 20px; height: 20px; }
-.purchase-dialog-body { padding: 24px; }
+.purchase-dialog-body {
+  min-height: 0; margin-bottom: 16px; padding: 24px 24px 8px; overflow-y: auto;
+  overscroll-behavior-y: contain; scrollbar-width: thin; scrollbar-color: var(--muted) transparent;
+}
+.purchase-dialog-body::-webkit-scrollbar { width: 6px; }
+.purchase-dialog-body::-webkit-scrollbar-track { background: transparent; }
+.purchase-dialog-body::-webkit-scrollbar-thumb { border-radius: 3px; background: var(--muted); }
+.purchase-dialog-body::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
 .purchase-dialog-product > svg { width: 44px; height: 44px; padding: 10px; border-radius: 11px; background: var(--mint); color: var(--green); flex: none; }
 .purchase-dialog-product > div:nth-child(2) { flex: 1; min-width: 0; }
 .purchase-dialog-product > div:last-child { text-align: right; }
@@ -152,6 +160,7 @@
 
 @media (max-width: 540px) {
   .purchase-dialog-header, .purchase-dialog-body { padding: 14px; }
+  .purchase-dialog-body { margin-bottom: 14px; padding-bottom: 0; }
   .purchase-dialog-product h3, .purchase-dialog-product strong { font-size: 18px; }
   .purchase-dialog-steps li { font-size: 12px; }
   .purchase-qr-content { flex-direction: column; align-items: center; text-align: center; gap: 8px; }
@@ -268,6 +277,7 @@
 
 .redemption-loading-content { display: grid; justify-items: center; gap: 16px; }
 .redemption-loading-label { color: var(--text); font-size: 16px; font-weight: 600; line-height: 1.5; }
+.redemption-result-dialog[aria-busy='true'] { min-height: 280px; }
 
 .redemption-progress-status { display: flex; align-items: flex-start; gap: 9px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); }
 .redemption-progress-status strong { font-size: 13px; line-height: 1.5; }
@@ -299,8 +309,9 @@
 .redemption-stage-list li[data-failure='true'] { color: var(--danger); }
 .redemption-stage-list li[data-failure='true'] > span { background: var(--danger); border-color: var(--danger); box-shadow: 0 0 0 4px color-mix(in srgb, var(--danger) 10%, transparent); }
 .redemption-result-panel[data-failure] .redemption-stage-list li strong { font-size: clamp(10px, 4cqi, 12px); white-space: nowrap; }
-.redemption-result-panel .redemption-stage-list { padding: 10px 0; margin: 8px 0 12px; }
-.redemption-result-panel .redemption-stage-list li { gap: 7px; }
-.redemption-result-panel .redemption-stage-list li > span { width: 28px; height: 28px; font-size: 14px; }
-.redemption-result-panel .redemption-stage-list li strong { font-size: clamp(10px, 4cqi, 12px); white-space: nowrap; }
-.redemption-result-panel .redemption-stage-list li:not(:last-child)::after { top: 14px; left: calc(50% + 17px); width: calc(100% - 34px); }
+.redemption-result-panel:not(.redemption-result-dialog) .redemption-stage-list { padding: 10px 0; margin: 8px 0 12px; }
+.redemption-result-panel:not(.redemption-result-dialog) .redemption-stage-list li { gap: 7px; }
+.redemption-result-panel:not(.redemption-result-dialog) .redemption-stage-list li > span { width: 28px; height: 28px; font-size: 14px; }
+.redemption-result-panel:not(.redemption-result-dialog) .redemption-stage-list li strong { font-size: clamp(10px, 4cqi, 12px); white-space: nowrap; }
+.redemption-result-dialog .redemption-stage-list li strong { font-size: 12px; white-space: nowrap; }
+.redemption-result-panel:not(.redemption-result-dialog) .redemption-stage-list li:not(:last-child)::after { top: 14px; left: calc(50% + 17px); width: calc(100% - 34px); }

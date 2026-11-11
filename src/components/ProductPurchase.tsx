@@ -206,7 +206,7 @@ function PurchaseDialog({ product, open, onClose, order, onOrder }: {
       {open && order?.cancellation && <section className="purchase-qr-panel" aria-label="订单取消状态"><h3>{order.status === 'cancelled' ? '订单已取消' : '超时退款处理中'}</h3><p>{order.cancellation.message}</p></section>}
       {open && order?.status === 'paid' && !order.cancellation && <>
         <p>{order.staffCheckout ? '免付开通订单已创建' : '付款已确认'}</p>
-        <AccountRedemption orderId={order.id} productName={order.productName} onResult={() => setRedemptionStarted(true)} />
+        <AccountRedemption orderId={order.id} productName={order.productName} presentation="dialog" onResult={() => setRedemptionStarted(true)} />
       </>}
       {order && order.status !== 'paid' && order.status !== 'cancelled' && <section className="purchase-qr-panel" aria-label="支付宝支付">
         <header><img src="/brand/alipay.svg" alt="" width="28" height="28" /><h3>支付宝支付</h3>

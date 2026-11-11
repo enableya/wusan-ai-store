@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { PaymentGateway } from './alipay.ts';
 import type { Withdrawal, WithdrawalReport, PayoutResult } from '../src/types/withdrawals.ts';
-import { withdrawalReceiptLimit, withdrawalStatuses } from '../src/types/withdrawals.ts';
+import { withdrawalStatuses } from '../src/types/withdrawals.ts';
 import { amountCents, OrderError } from './orders.ts';
 import { verifyPassword, dummyPasswordHash } from './passwords.ts';
 
@@ -143,40 +143,20 @@ export function withdrawalRepository(db: DatabaseSync, gateway: PaymentGateway) 
       });
     },
     manualComplete(id: string, actor: string, input: Record<string, unknown>) {
-      const transferNo = typeof input.transferNo === 'string' ? input.transferNo.trim() : '';
-      const paidAt = typeof input.paidAt === 'string' ? input.paidAt : '';
-      const paidTime = Date.parse(paidAt);
-      const amount = typeof input.amount === 'string' ? amountCents(input.amount) : null;
-      if (input.confirmed !== true || !/^\d{16,64}$/.test(transferNo) || !Number.isFinite(paidTime) || !paidAt.endsWith('Z')
-        || paidTime > Date.now() || !amount) throw new OrderError(400, 'INVALID_MANUAL_PAYOUT', '请填写支付宝交易号、实际转账金额及有效的转账时间，并确认已核实转账成功。');
-      const receipt = typeof input.receipt === 'string' ? input.receipt : '';
-      if (receipt.length > Math.ceil(withdrawalReceiptLimit / 3) * 4 + 32) throw new OrderError(400, 'INVALID_RECEIPT', '转账凭证仅支持 512 KB 以内的 PNG 或 JPG 图片。');
-      const match = /^data:(image\/(?:png|jpeg));base64,([A-Za-z0-9+/]+={0,2})$/.exec(receipt);
-      const bytes = match ? Buffer.from(match[2], 'base64') : Buffer.alloc(0);
-      const validImage = match?.[1] === 'image/png'
-        ? bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))
-        : bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
-      if (!match || !bytes.length || bytes.length > withdrawalReceiptLimit || bytes.toString('base64') !== match[2] || !validImage) {
-        throw new OrderError(400, 'INVALID_RECEIPT', '请上传 512 KB 以内的 PNG 或 JPG 转账成功凭证。');
-      }
+      if (input.confirmed !== true) throw new OrderError(400, 'INVALID_MANUAL_PAYOUT', '请确认已向收款人完成人工打款。');
       return transaction(() => {
         const row = raw(id);
         const record = db.prepare('SELECT * FROM referral_manual_payouts WHERE withdrawal_id = ?').get(id);
-        if (row.payout_method !== 'manual' || !record || record.started_by !== actor) throw fail('请由领取该笔人工打款的管理员完成登记。');
-        if (row.amount_cents !== amount || paidTime < Date.parse(String(row.created_at))) throw fail('转账金额或时间与提现申请不符，请核对原始凭证。');
-        const normalizedTime = new Date(paidTime).toISOString();
-        if (row.status === 'paid' && row.transfer_no === transferNo && row.paid_at === normalizedTime
-          && record.receipt instanceof Uint8Array && bytes.equals(record.receipt)) return view(row, true);
-        if (row.status !== 'processing') throw fail('申请状态已变更，请刷新列表，勿重复登记或转账。');
-        if (db.prepare('SELECT id FROM referral_withdrawals WHERE transfer_no = ? AND id != ?').get(transferNo, id)) {
-          throw fail('该支付宝交易号已登记在其他提现单，不能重复使用。');
-        }
+        if (row.payout_method !== 'manual' || !record || record.started_by !== actor) throw fail('请由领取该笔人工打款的管理员完成确认。');
+        if (row.status === 'paid' && record.recorded_by === actor) return view(row, true);
+        if (row.status !== 'processing') throw fail('申请状态已变更，请刷新列表，勿重复确认或转账。');
+        const confirmedAt = now();
         // The transfer has already happened; a later rebate refund must not prevent truthful settlement.
-        db.prepare(`UPDATE referral_manual_payouts SET recorded_by=?,recorded_at=?,receipt=?,receipt_type=? WHERE withdrawal_id=?`)
-          .run(actor, now(), bytes, match[1], id);
-        db.prepare(`UPDATE referral_withdrawals SET status='paid',transfer_no=?,paid_at=?,note='人工转账已核实，打款凭证已登记。' WHERE id=?`)
-          .run(transferNo, normalizedTime, id);
-        event(id, actor, 'manual-complete', 'paid', `支付宝交易号：${transferNo}；转账时间：${normalizedTime}`);
+        db.prepare('UPDATE referral_manual_payouts SET recorded_by=?,recorded_at=? WHERE withdrawal_id=?')
+          .run(actor, confirmedAt, id);
+        db.prepare("UPDATE referral_withdrawals SET status='paid',paid_at=?,note='管理员已确认完成人工打款。' WHERE id=?")
+          .run(confirmedAt, id);
+        event(id, actor, 'manual-complete', 'paid', '管理员确认已完成人工打款。');
         return view(raw(id), true);
       });
     },
@@ -199,7 +179,7 @@ export function withdrawalRepository(db: DatabaseSync, gateway: PaymentGateway) 
       return { bytes: record.receipt, type: String(record.receipt_type) };
     },
     async pay(id: string, actor: string, queryOnly = false) {
-      if (!queryOnly) throw fail('提现已改为人工打款，请领取人工打款并在转账成功后登记凭证。', 'MANUAL_PAYOUT_REQUIRED');
+      if (!queryOnly) throw fail('提现已改为人工打款，请领取人工打款并在转账成功后确认已打款。', 'MANUAL_PAYOUT_REQUIRED');
       const payout = configured();
       if (locks.has(id)) throw fail('该笔打款正在处理中，请稍后查询。');
       locks.add(id);

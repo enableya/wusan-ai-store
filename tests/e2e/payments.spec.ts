@@ -9,6 +9,57 @@ const example: Order = {
   details: { entitlements: null, deliveryMethod: null, deliveryTime: null, accountRequirements: null, afterSales: null },
 };
 
+for (const viewport of [
+  { width: 320, height: 568 }, { width: 390, height: 640 },
+  { width: 1440, height: 620 }, { width: 1440, height: 1000 },
+]) {
+  test(`${viewport.width}x${viewport.height} purchase dialog scrolls inside rounded edges with a fixed close button`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.route('**/api/payments/config', route => route.fulfill({ json: { data: {
+      enabled: false, environment: 'sandbox', message: '本地测试',
+    } } }));
+    await page.goto('/products/chatgpt-plus');
+    await page.getByLabel('验证码', { exact: true }).fill(await page.getByRole('button', { name: /点击更换/ }).innerText());
+    await page.getByRole('button', { name: '立即购买', exact: true }).click();
+    const dialog = page.getByRole('dialog');
+    const body = dialog.locator('.purchase-dialog-body');
+    const close = dialog.getByRole('button', { name: '关闭购买弹窗' });
+    const closeBefore = await close.boundingBox();
+    const layout = await dialog.evaluate(element => {
+      const body = element.querySelector('.purchase-dialog-body')!;
+      const header = element.querySelector('.purchase-dialog-header')!;
+      return {
+        overflow: getComputedStyle(element).overflowY,
+        scrollbar: getComputedStyle(body).scrollbarWidth,
+        dialogHeight: element.clientHeight, dialogContentHeight: element.scrollHeight,
+        bodyHeight: body.clientHeight, bodyContentHeight: body.scrollHeight,
+        headerBottom: header.getBoundingClientRect().bottom, bodyTop: body.getBoundingClientRect().top,
+        bottomInset: element.getBoundingClientRect().bottom - body.getBoundingClientRect().bottom,
+        horizontalOverflow: body.scrollWidth > body.clientWidth + 1,
+      };
+    });
+    expect(layout.overflow).toBe('hidden');
+    expect(layout.scrollbar).toBe('thin');
+    expect(layout.dialogContentHeight).toBeLessThanOrEqual(layout.dialogHeight + 1);
+    expect(layout.bodyTop).toBeGreaterThanOrEqual(layout.headerBottom - 1);
+    expect(layout.bottomInset).toBeGreaterThanOrEqual(14);
+    expect(layout.horizontalOverflow).toBe(false);
+    if (viewport.height < 700) expect(layout.bodyContentHeight).toBeGreaterThan(layout.bodyHeight);
+    await dialog.screenshot({ path: `artifacts/purchase-scroll-top-${viewport.width}-${viewport.height}.png` });
+    await body.evaluate(element => { element.scrollTop = element.scrollHeight; });
+    await expect(dialog.getByRole('button', { name: '联系客服', exact: true })).toBeInViewport();
+    await expect(close).toBeInViewport();
+    expect((await close.boundingBox())!.y).toBeCloseTo(closeBefore!.y, 1);
+    await dialog.screenshot({ path: `artifacts/purchase-scroll-bottom-${viewport.width}-${viewport.height}.png` });
+    await close.click();
+    await expect(dialog).not.toBeVisible();
+    await page.getByRole('button', { name: '立即购买', exact: true }).click();
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(dialog).not.toBeVisible();
+  });
+}
+
 for (const width of [390, 1440]) {
   test(`${width}px coupon updates dialog price and preserves original price after creating an order`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1000 });
@@ -231,7 +282,7 @@ for (const width of [390, 1440]) {
     await submitRequest;
     await expect(cancel).toBeDisabled();
     finishSubmit();
-    await expect(page.locator('.redemption-loading-label')).toHaveText('已受理，排队中');
+    await expect(page.locator('.redemption-progress-status')).toContainText('已受理，等待处理');
     await expect(cancel).toHaveCount(0);
     await page.goto('/orders');
     await expect(page.locator('.server-order-row')).toContainText(order.id);
@@ -361,8 +412,10 @@ for (const environment of ['sandbox', 'production'] as const) {
   });
 }
 
-test('purchase dialog displays the order QR and confirms payment from the server', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+for (const width of [320, 390, 1440]) {
+test(`${width}px purchase dialog uses the original recharge flow without expanding provider history`, async ({ page }) => {
+  await page.clock.install();
+  await page.setViewportSize({ width, height: 844 });
   await page.route('**/api/payments/config', route => route.fulfill({ json: { data: {
     enabled: true, environment: 'sandbox', message: '测试',
   } } }));
@@ -378,6 +431,10 @@ test('purchase dialog displays the order QR and confirms payment from the server
 
   const redemptionPath = '**/api/orders/' + example.id + '/redemption';
   const initial = { enabled: true, submitted: false, account: null, result: null };
+  const timeline = Array.from({ length: 13 }, (_, index) => ({
+    title: '订单处理', detail: index % 2 ? '处理已完成。' : '系统正在处理订单。',
+    at: '2026-11-11T01:41:06Z', source: 'provider',
+  }));
   await page.route(redemptionPath, route => route.fulfill({ json: { data: initial } }));
   await page.route(redemptionPath + '/policy', route => route.fulfill({ json: { data: { terms: 'test-1', privacy: 'test-2' } } }));
   let previewAttempts = 0;
@@ -390,10 +447,18 @@ test('purchase dialog displays the order QR and confirms payment from the server
   });
   await page.route(redemptionPath + '/submit', route => {
     expect(route.request().postDataJSON()).toEqual({ confirmationId: 'test-confirmation' });
-    return route.fulfill({ json: { data: { ...initial, submitted: true, rechargeEmail: 'buyer@example.invalid', result: { orderNo: 'TEST-REDEEM', state: 'QUEUED', settlement: 'UNKNOWN', progress: 0 } } } });
+    return route.fulfill({ json: { data: { ...initial, submitted: true, rechargeEmail: 'buyer@example.invalid', result: { orderNo: 'TEST-REDEEM', state: 'QUEUED', settlement: 'UNKNOWN', progress: 0, timeline } } } });
   });
+  let refreshCount = 0;
+  const states = [
+    { state: 'FULFILLING', settlement: 'UNKNOWN', progress: 60 },
+    { state: 'FULFILLED', settlement: 'UNKNOWN', progress: 100 },
+    { state: 'FULFILLED', settlement: 'PAID', progress: 100 },
+  ];
   await page.route(redemptionPath + '/refresh', route => route.fulfill({
-    json: { data: { ...initial, submitted: true, rechargeEmail: 'buyer@example.invalid', result: { orderNo: 'TEST-REDEEM', state: 'FULFILLED', settlement: 'PAID', progress: 100 } } },
+    json: { data: { ...initial, submitted: true, rechargeEmail: 'buyer@example.invalid', result: {
+      orderNo: 'TEST-REDEEM', ...states[Math.min(refreshCount++, states.length - 1)], timeline,
+    } } },
   }));
 
   await page.goto('/products/chatgpt-plus');
@@ -428,59 +493,88 @@ test('purchase dialog displays the order QR and confirms payment from the server
   await dialog.getByRole('button', { name: '确认并提交充值' }).click();
   await expect(dialog.locator('.purchase-dialog-steps [aria-current="step"]')).toContainText('开通结果');
   const resultPanel = dialog.getByRole('region',{name:'开通结果'});
-  await expect(resultPanel.locator('.redemption-progress-status')).toContainText('已受理，等待处理');
+  await expect(resultPanel.locator('.redemption-loading-label')).toHaveText('已受理，排队中');
   await expect(resultPanel.getByRole('list', { name: '充值流程' }).locator('[aria-current="step"]')).toContainText('排队受理');
-  await expect(resultPanel.locator('.redemption-progress-status')).toHaveCount(0, { timeout: 15000 });
+  await expect(resultPanel.getByRole('region', { name: '充值处理记录' })).toHaveCount(0);
+  await page.clock.fastForward(5000);
+  await expect(resultPanel.getByRole('list', { name: '充值流程' }).locator('[aria-current="step"]')).toContainText('充值处理');
+  await page.clock.fastForward(5000);
+  await expect(resultPanel.getByRole('list', { name: '充值流程' }).locator('[aria-current="step"]')).toContainText('结果确认');
+  await expect(resultPanel.locator('.redemption-result-tag')).not.toHaveText('充值成功');
+  await dialog.screenshot({ path: `artifacts/purchase-recharge-processing-${width}.png` });
+  await page.clock.fastForward(5000);
+  await expect(resultPanel.locator('.redemption-loading')).toHaveCount(0);
   await expect(dialog.locator('.redemption-result-tag')).toHaveText('充值成功');
   await expect(dialog.locator('.redemption-result-email')).toContainText('buyer@example.invalid');
+  await expect(resultPanel.getByRole('region', { name: '充值处理记录' })).toHaveCount(0);
+  await expect(resultPanel.getByRole('button', { name: /刷新/ })).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: '关闭购买弹窗' })).toBeInViewport();
+  await expect(dialog.getByRole('button', { name: '联系客服', exact: true })).toBeInViewport();
+  const layout = await dialog.evaluate(element => ({
+    width: element.clientWidth, contentWidth: element.scrollWidth,
+    height: element.clientHeight, contentHeight: element.scrollHeight,
+  }));
+  expect(layout.contentWidth).toBeLessThanOrEqual(layout.width + 1);
+  expect(layout.contentHeight).toBeLessThanOrEqual(layout.height + 1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)).toBe(false);
+  await dialog.screenshot({ path: `artifacts/purchase-recharge-success-${width}.png` });
+  await page.clock.fastForward(15000);
+  expect(refreshCount).toBe(3);
   await expect(page).toHaveURL(/\/products\/chatgpt-plus$/);
 });
+}
 
 for(const width of [320,390,1440]) {
-  test(`${width}px recharge keeps processing and confirmation visible and preserves history after completion`,async({page})=>{
+  test(`${width}px order recharge keeps progress and results visible without processing history`,async({page})=>{
     await page.clock.install();await page.setViewportSize({width,height:1000});
     let index=0;
     const states=[{state:'QUEUED',settlement:'UNKNOWN',progress:0},{state:'FULFILLING',settlement:'UNKNOWN',progress:60},
       {state:'FULFILLED',settlement:'UNKNOWN',progress:100},{state:'FULFILLED',settlement:'PAID',progress:100}];
+    const earlier=Array.from({length:13},()=>({title:'订单处理',detail:'处理已完成。',at:'2026-11-10T23:59:00Z',source:'provider'}));
     const timeline=[
       {title:'排队受理',detail:'充值请求已进入通道队列。',at:'2026-11-11T00:00:00Z',source:'provider'},
       {title:'充值处理',detail:'账号已连接，正在办理充值。',at:'2026-11-11T00:00:05Z',source:'provider'},
       {title:'结果确认',detail:'正在核实订阅开通及结算回执。',at:'2026-11-11T00:00:10Z',source:'provider'},
       {title:'确认完成',detail:'通道已确认充值成功。',at:'2026-11-11T00:00:15Z',source:'provider'},
     ];
-    const view=()=>({enabled:true,submitted:true,account:null,rechargeEmail:'history@example.invalid',result:{orderNo:'HISTORY-E2E',renewal:'',...states[index],timeline:timeline.slice(0,index+1)}});
+    const view=()=>({enabled:true,submitted:true,account:null,rechargeEmail:'history@example.invalid',result:{orderNo:'HISTORY-E2E',renewal:'',...states[index],timeline:[...earlier,...timeline.slice(0,index+1)]}});
     const path='**/api/orders/'+example.id+'/redemption';
     await page.route('**/api/orders/'+example.id,route=>route.fulfill({json:{data:{...example,status:'paid'}}}));
     await page.route(path,route=>route.fulfill({json:{data:view()}}));
     await page.route(path+'/refresh',route=>{index=Math.min(index+1,3);return route.fulfill({json:{data:view()}});});
     await page.goto('/orders/'+example.id);
     const panel=page.getByRole('region',{name:'开通结果'}),history=panel.getByRole('region',{name:'充值处理记录'});
-    await expect(history).toContainText('充值请求已进入通道队列');
+    await expect(panel.locator('.redemption-progress-status')).toContainText('已受理，等待处理');
+    await expect(history).toHaveCount(0);
     await expect(panel.locator('.redemption-loading')).toHaveCount(0);
     await panel.getByRole('button',{name:'刷新充值进度',exact:true}).click();
     await expect(panel.locator('.redemption-progress-status')).toContainText('正在充值处理');
-    await expect(history).toContainText('账号已连接，正在办理充值');
+    await expect(history).toHaveCount(0);
     await panel.getByRole('button',{name:'刷新充值进度',exact:true}).click();
     await expect(panel.locator('.redemption-progress-status')).toContainText('正在确认充值结果');
     await expect(panel.getByRole('list',{name:'充值流程'}).locator('[aria-current="step"]')).toContainText('结果确认');
     await expect(panel.locator('.redemption-success-banner')).toHaveCount(0);
-    await expect(history).toContainText('正在核实订阅开通及结算回执');
+    await expect(history).toHaveCount(0);
     await panel.screenshot({path:`artifacts/recharge-confirming-${width}.png`});
     await panel.getByRole('button',{name:'刷新充值进度',exact:true}).click();
     await expect(panel.locator('.redemption-success-banner')).toHaveText('充值成功');
-    await expect(history).toContainText('正在核实订阅开通及结算回执');
-    await expect(history).toContainText('通道已确认充值成功');
+    await expect(history).toHaveCount(0);
+    await expect(panel.getByRole('button',{name:/刷新/})).toHaveCount(0);
+    await expect(panel.locator('.redemption-result-email dd')).toHaveText('history@example.invalid');
+    await expect(panel.locator('.redemption-result-order')).toContainText('HISTORY-E2E');
     const banner=await panel.locator('.redemption-success-banner').boundingBox();
     expect(banner!.height).toBeLessThanOrEqual(36);expect(banner!.width).toBeLessThan((await panel.boundingBox())!.width*.75);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1)).toBe(false);
-    await panel.screenshot({path:`artifacts/recharge-history-success-${width}.png`});
-    await page.reload();await expect(history).toContainText('正在核实订阅开通及结算回执');await expect(history.locator('li')).toHaveCount(4);
-    // A poll may miss the transient confirmation status. Final provider history
-    // must still reveal that step, without delaying an already confirmed success.
+    await panel.screenshot({path:`artifacts/recharge-result-success-${width}.png`});
+    await page.reload();
+    await expect(panel.locator('.redemption-success-banner')).toHaveText('充值成功');
+    await expect(history).toHaveCount(0);
+    await expect(panel.getByRole('button',{name:/刷新/})).toHaveCount(0);
+    // A missed transient confirmation status must not delay an already confirmed success.
     index=1;await page.reload();await expect(panel.locator('.redemption-progress-status')).toContainText('正在充值处理');
     index=2;await panel.getByRole('button',{name:'刷新充值进度',exact:true}).click();
     await expect(panel.locator('.redemption-success-banner')).toHaveText('充值成功');
-    await expect(history).toContainText('正在核实订阅开通及结算回执');
+    await expect(history).toHaveCount(0);
   });
 }
 

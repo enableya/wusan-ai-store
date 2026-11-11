@@ -6,7 +6,6 @@ import { useApiResource } from '../hooks/useApiResource';
 import { ApiError, postApi } from '../services/api';
 import { resultTag } from '../lib/redemption-status';
 import { redemptionProgress } from '../lib/redemption-progress';
-import { RedemptionHistory } from './RedemptionHistory';
 import type { RedemptionPolicy, RedemptionResult, RedemptionView } from '../types/redemption';
 
 
@@ -24,17 +23,19 @@ function RedemptionSteps({ result }: { result: RedemptionResult | null }) {
   </ol>;
 }
 
-function RedemptionLoading({ label }: { label: string }) {
+function RedemptionLoading({ label, result }: { label: string; result?: RedemptionResult | null }) {
   return <div className="redemption-loading" role="status" aria-live="polite">
     <div className="redemption-loading-content">
       <div className="redemption-loading-indicator"><span className="redemption-loading-ring" aria-hidden="true" /></div>
       <span className="redemption-loading-label">{label}</span>
+      {result !== undefined && <RedemptionSteps result={result} />}
     </div>
   </div>;
 }
 
-export function AccountRedemption({ orderId, productName, onResult, onBusyChange }: {
+export function AccountRedemption({ orderId, productName, onResult, onBusyChange, presentation = 'page' }: {
   orderId: string; productName: string; onResult?: () => void; onBusyChange?: (busy: boolean) => void;
+  presentation?: 'page' | 'dialog';
 }) {
   const path = '/orders/' + encodeURIComponent(orderId) + '/redemption';
   const resource = useApiResource<RedemptionView>(path);
@@ -152,18 +153,20 @@ export function AccountRedemption({ orderId, productName, onResult, onBusyChange
 
   const charging = !settled && !progressPaused && result?.state !== 'MANUAL_REVIEW' && result?.state !== 'CANCELED';
   const succeeded = tag.tone === 'success';
-  if (submitted) return <section className="account-redemption redemption-result-panel" data-success={succeeded || undefined} data-failure={tag.tone === 'failure' || undefined} aria-label="开通结果" aria-busy={charging}>
+  const inDialog = presentation === 'dialog';
+  if (submitted) return <section className={`account-redemption redemption-result-panel${inDialog ? ' redemption-result-dialog' : ''}`} data-success={succeeded || undefined} data-failure={tag.tone === 'failure' || undefined} aria-label="开通结果" aria-busy={charging}>
+    {inDialog && charging && <RedemptionLoading label={tag.label} result={result} />}
     <h3>开通结果</h3>
-    {succeeded && <p className="redemption-success-banner" role="status"><Icon name="circle-check" /><span className="redemption-result-tag" data-tone="success">{tag.label}</span></p>}
-    <RedemptionSteps result={result} />
-    {!settled && <div className="redemption-progress-status" role="status">{charging && <span className="redemption-loading-ring" aria-hidden="true" />}<div><strong>{progress.title}</strong><p>{progress.detail}</p></div></div>}
+    {!inDialog && succeeded && <p className="redemption-success-banner" role="status"><Icon name="circle-check" /><span className="redemption-result-tag" data-tone="success">{tag.label}</span></p>}
+    {(!inDialog || !charging) && <RedemptionSteps result={result} />}
+    {inDialog && <p role="status"><span className="status-badge redemption-result-tag" data-tone={tag.tone}>{tag.label}</span></p>}
+    {!inDialog && !settled && <div className="redemption-progress-status" role="status">{charging && <span className="redemption-loading-ring" aria-hidden="true" />}<div><strong>{progress.title}</strong><p>{progress.detail}</p></div></div>}
     {tag.tone === 'failure' && result?.reason ? <div className="redemption-validation-error redemption-failure-detail" role="alert"><Icon name="info" /><div><h4>充值未完成</h4><p>{result.reason}</p></div></div>
-      : !succeeded && settled && <p role="status"><span className="status-badge redemption-result-tag" data-tone={tag.tone}>{tag.label}</span></p>}
-    <RedemptionHistory result={result} />
+      : !inDialog && !succeeded && settled && <p role="status"><span className="status-badge redemption-result-tag" data-tone={tag.tone}>{tag.label}</span></p>}
     <dl className="redemption-result-email"><dt>开通邮箱</dt><dd>{view.rechargeEmail || '未记录'}</dd></dl>
     {result?.orderNo && <p className="redemption-result-order">兑换单号 <span className="mono">{result.orderNo}</span></p>}
     {!settled && <p className="field-hint">可稍后在订单页查询原单进度。</p>}
-    {view.enabled && <button type="button" className="button secondary" disabled={busy} onClick={() => void send('refresh', {})}>{succeeded ? '刷新处理记录' : '刷新充值进度'}</button>}
+    {view.enabled && !settled && <button type="button" className="button secondary" disabled={busy} onClick={() => void send('refresh', {})}>刷新充值进度</button>}
   </section>;
 
   if (!view.enabled) return <p role="status" className="account-redemption">当前环境暂未开放账号兑换。</p>;

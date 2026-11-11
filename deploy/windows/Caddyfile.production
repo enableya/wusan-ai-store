@@ -14,19 +14,10 @@ wusan-ai.store {
         method POST
         path_regexp "^/api/orders/WS[0-9a-f]{20,60}/redemption/(preview|submit)$"
     }
-    @withdrawalEvidence {
-        method POST
-        path_regexp "^/api/admin/referrals/withdrawals/WD[a-f0-9]{32}/manual-complete$"
-    }
     handle /api/* {
         handle @redemptionSession {
             request_body {
                 max_size 1024000
-            }
-        }
-        handle @withdrawalEvidence {
-            request_body {
-                max_size 720000
             }
         }
         handle {

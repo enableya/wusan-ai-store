@@ -165,7 +165,7 @@ export function createApiServer(db: DatabaseSync, gateway: PaymentGateway = crea
         const withdrawalAction = /^\/api\/admin\/referrals\/withdrawals\/(WD[a-f0-9]{32})\/(approve|reject|pay|query|manual-start|manual-complete|manual-release)$/.exec(url.pathname);
         if (withdrawalAction && request.method === 'POST') {
           admin.requirePermission(request, 'withdrawals.manage');
-          const input = await writeInput(withdrawalAction[2] === 'manual-complete' ? 720000 : undefined);
+          const input = await writeInput();
           const actor = admin.requirePermission(request, 'withdrawals.manage');
           rateLimit(`withdrawal-review:${actor.username}`, 60);
           const [,id,action] = withdrawalAction;
