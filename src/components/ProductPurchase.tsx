@@ -193,7 +193,7 @@ export function PurchaseDialog({ product, open, onClose, order, onOrder }: {
     <div className="purchase-dialog-body">
       <div className="purchase-dialog-product">
         <Icon name="package" />
-        <div><h3>{order?.productName ?? product.name}</h3><p>{cardProduct?'成品号 · 卡密交付':`${order?.periodMonths ?? product.periodMonths} 个月订阅`}</p></div>
+        <div><h3>{order?.productName ?? product.name}</h3><p>{cardProduct?(product.unitLabel==='次'?'一次性接码 · 卡密交付':'成品号 · 卡密交付'):`${order?.periodMonths ?? product.periodMonths} 个月订阅`}</p></div>
         <div className="purchase-dialog-price" aria-live="polite"><div className="purchase-dialog-price-amounts" data-discounted={discounted}>
           <strong>{amount === null ? '待确认' : `¥${money(amount)}`}</strong>
           {discounted && <del title="优惠前价格">¥{money(originalAmount)}</del>}</div><p>数量 × 1</p></div>

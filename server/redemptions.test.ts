@@ -129,7 +129,8 @@ const preparedProduct = (id: unknown) => Response.json({
   expiresAt: new Date(Date.now() + 600000).toISOString(), product: { id },
 });
 
-for (const productId of ['chatgpt-pro-5x', 'chatgpt-pro-5x-clp', 'chatgpt-pro-5x-egp']) {
+// Provider metadata does not determine the plan; the reserved local inventory does.
+for (const productId of ['chatgpt-pro-5x', 'chatgpt-pro-5x-clp', 'chatgpt-pro-5x-egp', 'chatgpt-pro-5x-new-route', 'provider-product-123', 'chatgpt-plus', '', null, undefined]) {
   for (const staffCheckout of [false, true]) {
     test(`Pro 5x ${staffCheckout ? 'staff' : 'paid'} orders redeem the ${productId} route and reuse existing reservations`, async t => {
       const f = staffFixture(t, { prepare: async () => preparedProduct(productId) });
@@ -150,36 +151,37 @@ for (const productId of ['chatgpt-pro-5x', 'chatgpt-pro-5x-clp', 'chatgpt-pro-5x
   }
 }
 
-test('Pro route matching still rejects other tiers, unknown routes and invalid product responses before sending Session', async t => {
-  for (const [local, upstream] of [
-    ['chatgpt-pro-5x', 'chatgpt-plus'], ['chatgpt-pro-5x', 'chatgpt-pro-20x'],
-    ['chatgpt-pro-5x', 'chatgpt-pro-50x-clp'], ['chatgpt-pro-5x', 'chatgpt-pro-5x-unknown'],
-    ['chatgpt-pro-5x', ''], ['chatgpt-pro-5x', null], ['chatgpt-pro-5x', undefined],
-    ['chatgpt-plus', 'chatgpt-pro-5x-clp'], ['chatgpt-pro-20x', 'chatgpt-pro-5x-egp'],
-  ] as const) {
-    const f = staffFixture(t, { prepare: async () => preparedProduct(upstream) });
-    const order: Order = { ...f.order, productId: local, staffCheckout: undefined };
-    f.addCard('WRONG-TIER-CARD', 0, order.productId);
-    await assert.rejects(f.repo.preview(order, f.input), { code: 'VOUCHER_PRODUCT_MISMATCH' });
+test('invalid prepared sessions still stop redemption before sending Session', async t => {
+  for (const invalid of [
+    { redemptionId: '' }, { redemptionToken: '' }, { expiresAt: 'invalid' },
+    { expiresAt: '2020-01-01T00:00:00Z' },
+  ]) {
+    const f = staffFixture(t, { prepare: async () => Response.json({
+      ok: true, redemptionId: 'test-redemption', redemptionToken: 'private-token',
+      expiresAt: new Date(Date.now() + 600000).toISOString(), ...invalid,
+    }) });
+    const order: Order = { ...f.order, productId: 'chatgpt-pro-5x', staffCheckout: undefined };
+    f.addCard('PRO-5X-CARD', 0, order.productId);
+    await assert.rejects(f.repo.preview(order, f.input), { code: 'REDEMPTION_PREPARE' });
     assert.equal(f.repo.view(order).account, null);
     assert.equal(f.repo.view(order).submitted, false);
     assert.ok(f.calls.every(path => !path.endsWith('/session') && !path.endsWith('/submit')));
   }
 });
 
-test('Pro 5x cancellation checks recognize the same confirmed routes and keep other products blocked', async t => {
+test('Pro 5x cancellation checks use voucher availability rather than provider route IDs', async t => {
   const f = staffFixture(t);
   const order: Order = { ...f.order, productId: 'chatgpt-pro-5x', staffCheckout: undefined };
   f.addCard('RESERVED-PRO-CARD', 0, order.productId);
   f.db.prepare(`INSERT INTO order_redemptions(order_id,voucher_id,submit_key)
     SELECT ?,id,'reserved-submit-key' FROM voucher_inventory WHERE code='RESERVED-PRO-CARD'`).run(order.id);
-  for (const productId of ['chatgpt-pro-5x', 'chatgpt-pro-5x-clp', 'chatgpt-pro-5x-egp', 'chatgpt-plus', 'chatgpt-pro-20x', 'chatgpt-pro-5x-unknown']) {
+  for (const productId of ['chatgpt-pro-5x', 'chatgpt-pro-5x-clp', 'chatgpt-pro-5x-egp', 'chatgpt-plus', 'chatgpt-pro-20x', 'chatgpt-pro-5x-unknown', 'maiofa-gpt-5', null, undefined]) {
     const repo = redemptionRepository(f.db, async (_url, options) => {
       assert.deepEqual(JSON.parse(String(options?.body)), { voucherCode: 'RESERVED-PRO-CARD' });
       return Response.json({ ok: true, voucher: { state: 'AVAILABLE', product: { id: productId } }, order: null });
     });
     const result = await repo.timeoutCheck(order);
-    assert.equal(result.state, ['chatgpt-pro-5x', 'chatgpt-pro-5x-clp', 'chatgpt-pro-5x-egp'].includes(productId) ? 'safe' : 'uncertain');
+    assert.equal(result.state, 'safe');
   }
 });
 

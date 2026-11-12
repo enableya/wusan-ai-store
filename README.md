@@ -126,6 +126,7 @@ npm run catalog -- price chatgpt-plus 130
 | --- | ---: |
 | ChatGPT Plus | 130 元 |
 | ChatGPT Pro 5x | 660 元 |
+| Codex 接码（一次性） | 3 元／次 |
 | ChatGPT Pro 20x | 1,150 元 |
 | ChatGPT Pro 50x | 3,350 元 |
 

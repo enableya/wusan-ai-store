@@ -28,7 +28,7 @@ export function voucherInventory(db: DatabaseSync, environment: PaymentConfig['e
       }
       const product = db.prepare("SELECT json_extract(presentation,'$.deliveryType') AS deliveryType FROM products WHERE id=? AND active=1").get(productId);
       if (!product) throw new OrderError(404,'PRODUCT_NOT_FOUND','该商品不存在或已下架。');
-      if (product.deliveryType !== 'voucher') throw new OrderError(409,'NOT_CARD_PRODUCT','仅成品号卡密交付商品可设置使用说明。');
+      if (product.deliveryType !== 'voucher') throw new OrderError(409,'NOT_CARD_PRODUCT','仅卡密交付商品可设置使用说明。');
       const usageInstructions = input.usageInstructions.replace(/\r\n?/g,'\n').trim();
       db.prepare(`INSERT INTO product_voucher_instructions(product_id,environment,instructions) VALUES (?,?,?)
         ON CONFLICT(product_id,environment) DO UPDATE SET instructions=excluded.instructions`).run(productId,environment,usageInstructions);
@@ -73,16 +73,23 @@ export function voucherInventory(db: DatabaseSync, environment: PaymentConfig['e
           INSERT INTO voucher_inventory (product_id, environment, code, priority)
           VALUES (?, ?, ?, ?) ON CONFLICT(environment, code) DO NOTHING
         `);
-        let added = 0;
+        const isReserved = db.prepare(`SELECT 1 FROM voucher_inventory v
+          JOIN order_redemptions r ON r.voucher_id=v.id WHERE v.environment=? AND v.code=?`);
+        let added = 0, reserved = 0;
         for (const code of codes) {
           const inserted = insert.run(productId, environment, code, Number(priority)).changes;
+          const occupied = !inserted && !!isReserved.get(environment,code);
+          if (occupied) reserved++;
+          if (occupied && !skipDuplicates) {
+            throw new OrderError(409, 'DUPLICATE_VOUCHER', '卡密已存在且被充值订单占用。若充值未成功，请在订单管理中从原免付订单回收，回收后自动返回库存，无需重新导入。');
+          }
           if (!inserted && !skipDuplicates) {
             throw new OrderError(409, 'DUPLICATE_VOUCHER', '发现重复卡密。可勾选「跳过重复卡密」后重新导入。');
           }
           added += Number(inserted);
         }
         db.exec('COMMIT');
-        return { added, skipped: codes.length - added };
+        return { added, skipped: codes.length - added, ...(reserved ? { reserved } : {}) };
       } catch (error) {
         db.exec('ROLLBACK');
         throw error;

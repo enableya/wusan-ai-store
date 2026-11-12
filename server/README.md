@@ -16,7 +16,7 @@ Node.js 24 内置 HTTP / SQLite，支付宝使用官方 `alipay-sdk`。支持商
 | --- | --- | --- |
 | GET | `/api/health` | 数据库健康检查 |
 | GET | `/api/home` | 首页、商品、FAQ |
-| GET | `/api/products` | 已发布商品，可用 `?category=Plus` / `Pro` |
+| GET | `/api/products` | 已发布商品，可用 `?category=Plus` / `Pro` / `Codex` |
 | GET | `/api/products/:id` | 已发布商品详情 |
 | GET | `/api/content` | 帮助文章与 FAQ |
 | GET | `/api/payments/config` | 公开支付启用状态、沙箱 / 正式环境和提示；初始化浏览器 Cookie |

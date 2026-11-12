@@ -109,7 +109,7 @@ export default function PaymentPage() {
     <div className="detail-layout"><section className="order-detail-main">
       <div className="section-heading"><h2>订单信息</h2><span className="status-badge pending">{orderStatusLabel(order)}</span></div>
       <dl className="spec-list"><div><dt>订单号</dt><dd className="mono">{order.id}</dd></div>
-        <div><dt>订阅方案</dt><dd>{order.productName}</dd></div><div><dt>{order.deliveryType==='voucher'?'购买数量':'周期 / 数量'}</dt><dd>{order.deliveryType==='voucher'?'1 份':`${order.periodMonths} 个月 / 1 份`}</dd></div>
+        <div><dt>商品</dt><dd>{order.productName}</dd></div><div><dt>{order.deliveryType==='voucher'?'购买数量':'周期 / 数量'}</dt><dd>{order.deliveryType==='voucher'?`1 ${order.unitLabel || '份'}`:`${order.periodMonths} 个月 / 1 份`}</dd></div>
         <div><dt>订单金额</dt><dd>¥{money(order.priceCents)}</dd></div><div><dt>创建时间</dt><dd>{formatDate(order.createdAt)}</dd></div>
         {!order.staffCheckout && <><div><dt>付款截止</dt><dd>{formatDate(order.expiresAt)}</dd></div><div><dt>支付方式</dt><dd>支付宝</dd></div></>}
         {order.paidAt && <div><dt>到账确认时间</dt><dd>{formatDate(order.paidAt)}</dd></div>}

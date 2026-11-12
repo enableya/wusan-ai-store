@@ -29,7 +29,7 @@ export function adminOrderRepository(db: DatabaseSync, environment: AdminOrderLi
       const pageText = params.get('page') || '1';
       const page = Number(pageText);
       if ((refundReview && !Object.hasOwn(orderRefundReviewStatuses, refundReview)) || (paymentType && !Object.hasOwn(orderPaymentTypes, paymentType)) || orderNo.length > 80 || (status && !['pending', 'paid', 'closed', 'cancelled'].includes(status))
-        || (category && !['Plus', 'Pro', 'unknown'].includes(category)) || productId.length > 80
+        || (category && !['Plus', 'Pro', 'Codex', 'unknown'].includes(category)) || productId.length > 80
         || (start && (!validDay(start) || start > chinaDay())) || (end && (!validDay(end) || end > chinaDay()))
         || (start && end && start > end) || !/^[1-9]\d*$/.test(pageText) || !Number.isSafeInteger(page) || page > 100000) throw invalid();
       const where = ['o.environment = ?'];

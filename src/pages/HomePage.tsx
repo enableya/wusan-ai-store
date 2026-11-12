@@ -29,9 +29,9 @@ export default function HomePage() {
     </section>
     <div className="storefront-layout" id="catalog">
       <aside className="storefront-sidebar" aria-label="商品分类"><h2>分类</h2><nav aria-label="套餐分类">
-        {['全部', 'Plus', 'Pro'].map(value => <button key={value} type="button" data-category={value} aria-pressed={category === value} className={category === value ? 'selected' : ''} onClick={() => setCategory(value)}>
+        {['全部', 'Plus', 'Pro', 'Codex'].map(value => <button key={value} type="button" data-category={value} aria-pressed={category === value} className={category === value ? 'selected' : ''} onClick={() => setCategory(value)}>
           <Icon name={value === '全部' ? 'package' : value === 'Plus' ? 'sparkles' : 'layers'} />
-          <span>{value === '全部' ? '全部商品' : `ChatGPT ${value}`}</span>
+          <span>{value === '全部' ? '全部商品' : value === 'Codex' ? 'Codex' : `ChatGPT ${value}`}</span>
           <small>{products.filter(product => value === '全部' || product.category === value).length}</small>
         </button>)}
       </nav></aside>
@@ -40,7 +40,7 @@ export default function HomePage() {
           <input id="product-search" type="search" placeholder="搜索商品名称或关键词…" value={query} onChange={event => setQuery(event.target.value)} autoComplete="off" maxLength={100} />
           {query && <button type="button" aria-label="清空搜索" onClick={() => setQuery('')}><Icon name="x" /></button>}
         </div>
-        <div className="storefront-list-heading"><h2 id="catalog-heading">{category === '全部' ? '全部商品' : `ChatGPT ${category}`}</h2><span aria-live="polite">{selected.length} 件商品</span></div>
+        <div className="storefront-list-heading"><h2 id="catalog-heading">{category === '全部' ? '全部商品' : category === 'Codex' ? 'Codex' : `ChatGPT ${category}`}</h2><span aria-live="polite">{selected.length} 件商品</span></div>
         <div className="product-grid storefront-grid">{selected.map(product => <ProductCard key={product.id} product={product} />)}</div>
         {!selected.length && <div className="storefront-empty"><Icon name="search-x" /><h3>{products.length ? '没有找到相关商品' : '暂无可选套餐'}</h3><p>{products.length ? '试试其他关键词，或查看全部商品。' : '商品上架后将在这里展示。'}</p>{products.length > 0 && <button className="button secondary" type="button" onClick={reset}>清空筛选</button>}</div>}
       </section>

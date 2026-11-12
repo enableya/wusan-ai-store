@@ -63,7 +63,7 @@ export function AdminOrders({ onExpired }: { onExpired: () => void }) {
       <SelectField label="退款审核" value={draft.refundReview || 'all'} onValueChange={value => setDraft(current => ({ ...current, refundReview: value === 'all' ? '' : value }))}
         options={[{ value: 'all', label: '全部审核状态' }, ...Object.entries(orderRefundReviewStatuses).map(([value, label]) => ({ value, label }))]} />
       <SelectField label="商品分类" value={draft.category || 'all'} onValueChange={value => setDraft(current => ({ ...current, category: value === 'all' ? '' : value }))}
-        options={[{ value: 'all', label: '全部分类' }, { value: 'Plus', label: 'Plus' }, { value: 'Pro', label: 'Pro' }, { value: 'unknown', label: '未分类' }]} />
+        options={[{ value: 'all', label: '全部分类' }, { value: 'Plus', label: 'Plus' }, { value: 'Pro', label: 'Pro' }, { value: 'Codex', label: 'Codex' }, { value: 'unknown', label: '未分类' }]} />
       <SelectField label="商品" value={draft.productId || 'all'} onValueChange={value => setDraft(current => ({ ...current, productId: value === 'all' ? '' : value }))}
         options={[{ value: 'all', label: '全部商品' }, ...products.map(product => ({ value: product.id, label: product.name }))]} />
       <DateField label="下单开始日期" value={draft.start} today={day()} onChange={start => setDraft(current => ({ ...current, start }))} />

@@ -76,7 +76,7 @@ test('new product visits update live admin totals, reloads stay deduplicated and
     await expect(page.getByLabel('数据环境')).toHaveCount(0);
     await expect(page.getByText('测试数据', { exact: true })).toBeVisible();
     await expect(page.locator('.admin-metric').first().locator('strong')).toHaveText('2');
-    await expect(page.locator('.admin-table tbody tr')).toHaveCount(5);
+    await expect(page.locator('.admin-table tbody tr')).toHaveCount(6);
     await expect(page.locator('.admin-table tbody')).toContainText('chatgpt-plus');
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: 1000 });

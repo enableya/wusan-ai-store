@@ -14,14 +14,6 @@ const string = (value: unknown, limit = 256) =>
   typeof value === 'string' && value.length <= limit ? value : '';
 const parse = <T>(value: string | null): T | null => value ? JSON.parse(value) as T : null;
 
-// Storefront plan IDs and upstream route IDs are separate namespaces. These
-// explicitly verified regional routes all deliver Pro 5x; never infer a tier
-// from a voucher prefix, product name or an arbitrary product ID suffix.
-const pro5xRoutes = new Set(['chatgpt-pro-5x', 'chatgpt-pro-5x-clp', 'chatgpt-pro-5x-egp']);
-const matchesVoucherProduct = (productId: string, upstreamId: unknown) =>
-  typeof upstreamId === 'string' && (upstreamId === productId
-    || productId === 'chatgpt-pro-5x' && pro5xRoutes.has(upstreamId));
-
 type Prepared = { id: string; token: string; expiresAt: string; policy: RedemptionPolicy };
 type StaffPreview = { account: string; session_hash: string; policy: string; expires_at: string; lease_until: number };
 type Row = {
@@ -242,9 +234,6 @@ export function redemptionRepository(db: DatabaseSync, fetcher = fetch) {
       let prepared = parse<Prepared>(row.prepared);
       if (!prepared || Date.parse(prepared.expiresAt) <= Date.now()) {
         const result = await request('/v2/redemptions/prepare', { method: 'POST', body: JSON.stringify({ voucherCode: row.code }) });
-        if (!matchesVoucherProduct(order.productId, record(result.product).id)) {
-          throw new OrderError(409, 'VOUCHER_PRODUCT_MISMATCH', '卡密对应的套餐与订单不一致，请联系客服。');
-        }
         prepared = { id: string(result.redemptionId), token: string(result.redemptionToken, 4096), expiresAt: string(result.expiresAt), policy };
         if (!prepared.id || !prepared.token || !(Date.parse(prepared.expiresAt) > Date.now())) {
           throw new OrderError(502, 'REDEMPTION_PREPARE', '兑换服务未返回有效会话。');
@@ -340,10 +329,19 @@ export function redemptionRepository(db: DatabaseSync, fetcher = fetch) {
           const noOrder = response.order == null;
           const terminalNoCharge = settlement === 'NO_CHARGE' && ['NO_CHARGE','CANCELED'].includes(String(upstream.orderState));
           const sameSubmission = !reserved.submitted || !!reserved.submitted_order_no && upstream.orderNo === reserved.submitted_order_no;
-          if (voucher.state !== 'AVAILABLE' || !matchesVoucherProduct(order.productId,record(voucher.product).id)
+          // Local candidate checks already verify the voucher's product and environment.
+          // Provider product IDs describe routes and cannot determine whether a card was used.
+          if (voucher.state !== 'AVAILABLE'
             || upstream.orderState === 'FULFILLED' || settlement === 'PAID' || renewal === 'paid' || renewal === 'ready'
             || !sameSubmission || (reserved.submitted ? !terminalNoCharge : !noOrder && !terminalNoCharge)) {
-            throw new OrderError(409,'VOUCHER_NOT_UNUSED','卡密已使用、充值仍在处理或结果尚未确认，不能回收。请刷新充值状态后重试。');
+            const message = voucher.state === 'CONSUMED' ? '上游返回卡密已使用，暂不能回收；若充值失败，请联系通道核实并恢复卡密状态。'
+              : voucher.state === 'RESERVED' ? '上游返回卡密仍被占用或正在处理，请刷新充值状态后重试。'
+              : voucher.state !== 'AVAILABLE' ? '上游尚未确认卡密可用，暂不能回收，请稍后重试或联系通道核实。'
+              : upstream.orderState === 'FULFILLED' || settlement === 'PAID' || renewal === 'paid' || renewal === 'ready'
+                ? '上游已确认充值完成或续费设置成功，不能回收。'
+              : !sameSubmission ? '暂时无法核对本次充值订单，不能回收，请刷新充值状态或联系通道核实。'
+              : '卡密当前可用，但关联充值尚未确认结束且未扣款，暂不能回收，请刷新充值状态后重试。';
+            throw new OrderError(409,'VOUCHER_NOT_UNUSED',message);
           }
           db.exec('BEGIN IMMEDIATE');
           try {
@@ -419,7 +417,6 @@ export function redemptionRepository(db: DatabaseSync, fetcher = fetch) {
         const next = parse<RedemptionResult>(rowFor(order.id)?.result ?? null);
         if (opened(next)) return { state:'fulfilled' as const,voucherId:Number(lease.voucher_id) };
         const voucher = record(response.voucher);
-        if (record(voucher.product).id && !matchesVoucherProduct(order.productId, record(voucher.product).id)) return {state:'uncertain' as const,voucherId:Number(lease.voucher_id)};
         const reusable = voucher.state === 'AVAILABLE';
         const noCharge = record(upstream.settlement).state === 'NO_CHARGE';
         const safe = reusable && (row.submitted ? !!row.submitted_order_no && upstream.orderNo === row.submitted_order_no && noCharge : !response.order || noCharge);

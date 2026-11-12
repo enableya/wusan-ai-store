@@ -6,7 +6,7 @@ import { Icon } from './Icon';
 
 export function ProductArt({ product, large = false }: { product: Product; large?: boolean }) {
   return <div className={`product-art ${product.color} ${large ? 'large' : ''}`} aria-hidden="true">
-    <div className="art-label"><Icon name={product.icon} /><strong>{product.label}</strong><span>CHATGPT {product.category.toUpperCase()}</span></div>
+    <div className="art-label"><Icon name={product.icon} /><strong>{product.label}</strong><span>{product.category === 'Codex' ? 'CODEX' : `CHATGPT ${product.category.toUpperCase()}`}</span></div>
     <div className="art-symbol"><span>{product.mark}</span></div>
   </div>;
 }
@@ -22,7 +22,7 @@ export function Price({ product }: { product: Product }) {
     <div className="price pending-price">价格待确认</div><span className="price-caption">确认价格后开放选择</span>
   </>;
   return <><div className="price"><span className="currency">¥</span>{money(product.priceCents)}
-    <span className="period">/ {product.deliveryType==='voucher'?'份':'月'}</span></div><span className="price-caption">本站售价 · 人民币</span></>;
+    <span className="period">/ {product.unitLabel || (product.deliveryType==='voucher'?'份':'月')}</span></div><span className="price-caption">本站售价 · 人民币</span></>;
 }
 
 export function SmallProductIcon({ product }: { product?: Product }) {
@@ -33,7 +33,7 @@ export function productCover(product: Product, detail = false) {
   const covers: Record<string, string> = {
     'chatgpt-plus': 'chatgpt-plus.svg', 'chatgpt-pro-5x': 'chatgpt-pro-5x.svg',
     'chatgpt-pro-20x': 'chatgpt-pro-20x.svg', 'chatgpt-pro-50x-ph': 'chatgpt-pro-50x.svg',
-    'chatgpt-plus-account':'chatgpt-plus-account.svg',
+    'chatgpt-plus-account':'chatgpt-plus-account.svg', 'codex-sms':'codex-sms.svg',
   };
   const file = covers[product.id] || 'subscription.svg';
   return `/products/${detail ? file.replace('.svg', '-detail.svg') : file}`;
@@ -63,7 +63,7 @@ export function ProductBuyPrice({ product }: { product: Product }) {
   return <div className="product-buy-price">
     <span>{staffPrice ? '免付开通' : '价格'}</span>
     <strong>{priceCents === null ? '待确认' : <><small>¥</small>{money(priceCents)}</>}</strong>
-    <span>{product.deliveryType==='voucher'?'/ 份':`/ ${product.periodMonths} 个月`}</span>
+    <span>{product.deliveryType==='voucher'?`/ ${product.unitLabel || '份'}`:`/ ${product.periodMonths} 个月`}</span>
   </div>;
 }
 

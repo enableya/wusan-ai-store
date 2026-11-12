@@ -78,52 +78,55 @@ test('unconfigured checkout stays disabled and never persists a payable order', 
   assert.doesNotMatch(JSON.stringify(status.body), /privateKey|sellerId|appId/);
 });
 
-test('88 yuan finished accounts deliver one private card only after verified payment and never reuse sold inventory',async t=>{
+for(const [productId,priceCents,amount] of [['chatgpt-plus-account',8800,'88.00'],['codex-sms',300,'3.00']] as const) {
+test(`${productId} delivers one private card only after verified payment and never reuses sold inventory`,async t=>{
   const {db,request,notify}=await setup(t);
   const {voucherInventory}=await import('./vouchers.ts');
   const inventory=voucherInventory(db,'sandbox');
-  inventory.saveInstructions('chatgpt-plus-account',{usageInstructions:'第一步：复制卡密\n第二步：按交付说明操作'});
-  voucherInventory(db,'production').saveInstructions('chatgpt-plus-account',{usageInstructions:'不可显示的正式环境说明'});
+  inventory.saveInstructions(productId,{usageInstructions:'第一步：复制卡密\n第二步：按交付说明操作'});
+  voucherInventory(db,'production').saveInstructions(productId,{usageInstructions:'不可显示的正式环境说明'});
   const insert=db.prepare('INSERT INTO voucher_inventory(product_id,environment,code,priority) VALUES (?,?,?,?)');
   insert.run('chatgpt-plus','sandbox','PRIVATE-OTHER-PRODUCT',1);
-  insert.run('chatgpt-plus-account','production','PRIVATE-OTHER-ENVIRONMENT',1);
-  insert.run('chatgpt-plus-account','sandbox','PRIVATE-ACCOUNT-NORMAL',0);
-  insert.run('chatgpt-plus-account','sandbox','PRIVATE-ACCOUNT-PRIORITY',1);
-  const payload={...input,productId:'chatgpt-plus-account',expectedPriceCents:8800};
+  insert.run(productId,'production','PRIVATE-OTHER-ENVIRONMENT',1);
+  insert.run(productId,'sandbox','PRIVATE-ACCOUNT-NORMAL',0);
+  insert.run(productId,'sandbox','PRIVATE-ACCOUNT-PRIORITY',1);
+  const payload={...input,productId:productId,expectedPriceCents:priceCents};
   assert.equal((await request('/api/orders',{...payload,expectedPriceCents:1})).response.status,409);
   const created=await request('/api/orders',payload);assert.equal(created.response.status,201);
-  const order=created.body.data;assert.equal(order.priceCents,8800);assert.equal(order.deliveryType,'voucher');
+  const order=created.body.data;assert.equal(order.priceCents,priceCents);assert.equal(order.deliveryType,'voucher');assert.equal(order.unitLabel,productId==='codex-sms'?'次':undefined);
   const path=`/api/orders/${order.id}/card`;
   assert.equal((await request(path,{})).response.status,409);
   assert.equal((await request(path,{}, {cookie:''})).response.status,404);
   assert.equal((await request(path,{}, {origin:'https://evil.example'})).response.status,403);
   assert.equal((await notify({out_trade_no:order.id,total_amount:'0.01'})).status,400);
   assert.equal(db.prepare('SELECT count(*) n FROM order_card_deliveries').get()!.n,0);
-  assert.equal((await notify({out_trade_no:order.id,total_amount:'88.00'})).status,200);
+  assert.equal((await notify({out_trade_no:order.id,total_amount:amount})).status,200);
   const delivered=await request<{delivered:boolean;code:string;usageInstructions:string}>(path,{});
   assert.equal(delivered.body.data.code,'PRIVATE-ACCOUNT-PRIORITY');
   assert.equal(delivered.body.data.usageInstructions,'第一步：复制卡密\n第二步：按交付说明操作');
-  inventory.saveInstructions('chatgpt-plus-account',{usageInstructions:'套餐更新后的共用说明'});
+  inventory.saveInstructions(productId,{usageInstructions:'套餐更新后的共用说明'});
   assert.equal((await request<{usageInstructions:string}>(path,{})).body.data.usageInstructions,'套餐更新后的共用说明');
   const retries=await Promise.all(Array.from({length:12},()=>request<{code:string}>(path,{})));
   assert.ok(retries.every(result=>result.body.data.code==='PRIVATE-ACCOUNT-PRIORITY'));
-  await notify({out_trade_no:order.id,total_amount:'88.00'});
+  await notify({out_trade_no:order.id,total_amount:amount});
   assert.equal(db.prepare('SELECT count(*) n FROM order_card_deliveries').get()!.n,1);
   const after=(await request(`/api/orders/${order.id}`)).body.data;
   assert.equal(after.cancelAction,null);assert.equal(after.cardDelivery?.delivered,true);
   assert.equal((await request(`/api/orders/${order.id}/redemption`)).response.status,409);
   assert.doesNotMatch(JSON.stringify((await request<Order[]>('/api/orders')).body),/PRIVATE-/);
   assert.equal((await request(`/api/orders/${order.id}/cancel`,{expectedAction:'request_refund'})).response.status,409);
-  const available=voucherInventory(db,'sandbox').listCards('chatgpt-plus-account',0);
+  const available=voucherInventory(db,'sandbox').listCards(productId,0);
   assert.deepEqual(available.cards.map(card=>card.code),['PRIVATE-ACCOUNT-NORMAL']);
   const other=await request('/api/orders',payload,{key:randomUUID()});
-  await notify({out_trade_no:other.body.data.id,total_amount:'88.00',notify_id:'another-account-notification',trade_no:'2026101722000000000000000002'});
+  await notify({out_trade_no:other.body.data.id,total_amount:amount,notify_id:'another-account-notification',trade_no:'2026101722000000000000000002'});
   assert.equal((await request<{code:string}>(`/api/orders/${other.body.data.id}/card`,{})).body.data.code,'PRIVATE-ACCOUNT-NORMAL');
   assert.equal((await request<{usageInstructions:string}>(`/api/orders/${other.body.data.id}/card`,{})).body.data.usageInstructions,'套餐更新后的共用说明');
-  inventory.saveInstructions('chatgpt-plus-account',{usageInstructions:''});
+  inventory.saveInstructions(productId,{usageInstructions:''});
   assert.equal((await request<{usageInstructions:string}>(path,{})).body.data.usageInstructions,'');
   assert.equal(db.prepare('SELECT count(*) n FROM order_fulfillment_deadlines').get()!.n,0);
 });
+
+}
 
 test('an account order waiting for stock can retry or request reviewed cancellation without calling the recharge provider',async t=>{
   const {db,request,notify}=await setup(t);

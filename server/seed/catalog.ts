@@ -47,6 +47,15 @@ export const products: Product[] = [
     currency: 'CNY', periodMonths: 1, deliveryType: 'voucher',
     details: { entitlements: '付款后提供 ChatGPT 账号密码，可直接登录使用，并提供登录教程。', deliveryMethod: '付款确认后在订单中获取卡密', deliveryTime: null, accountRequirements: '无需提交个人账号 Session', afterSales: '付款后提供 GPT 账号密码，可直接登录使用，并提供登录教程。提供 30 天订阅及封号质保。' },
   },
+  {
+    id: 'codex-sms', name: 'Codex 接码', category: 'Codex',
+    mark: '接码', color: 'blue', icon: 'sparkles', label: '接码服务',
+    description: '一次性接码服务，付款后获取卡密，按随附使用说明操作。',
+    audience: '需要 Codex 一次性接码服务的用户', priceCents: 300, selectable: true,
+    features: ['一次性接码', '按次购买', '使用说明随卡提供'],
+    currency: 'CNY', periodMonths: 1, deliveryType: 'voucher', unitLabel: '次',
+    details: { entitlements: '每条卡密用于一次性接码。付款后提供 Codex 接码卡密，具体使用方式以订单内的使用说明为准。', deliveryMethod: '付款确认后在订单中获取卡密', deliveryTime: null, accountRequirements: '无需提交个人账号 Session', afterSales: null },
+  },
 ];
 
 export const findProduct = (id?: string) => products.find((product) => product.id === id);

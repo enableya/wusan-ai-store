@@ -61,8 +61,11 @@ function VoucherImport({ productId, onExpired, onImported }: { productId: string
       if (new TextEncoder().encode(JSON.stringify(payload)).length > 16384) {
         throw new Error('本批卡密超过 16 KB，请分批导入。');
       }
-      const result = await postApi<{ added: number; skipped: number }>('/admin/vouchers', payload);
-      setLines(''); $message.success('已添加 ' + result.added + ' 条，跳过重复卡密 ' + result.skipped + ' 条。');
+      const result = await postApi<{ added: number; skipped: number; reserved?: number }>('/admin/vouchers', payload);
+      setLines('');
+      const summary = '已添加 ' + result.added + ' 条，跳过重复卡密 ' + result.skipped + ' 条。';
+      if (result.reserved) $message.info(summary + '其中 ' + result.reserved + ' 条被充值订单占用；未成功的免付订单请在订单管理中回收，卡密将自动回库。');
+      else $message.success(summary);
       onImported();
     } catch (cause) {
       if (cause instanceof ApiError && cause.status === 401) onExpired();
@@ -74,6 +77,7 @@ function VoucherImport({ productId, onExpired, onImported }: { productId: string
   return <form className="admin-vouchers" onSubmit={submit}>
       <fieldset disabled={busy}>
         <label htmlFor={fieldId}>卡密</label>
+        <p className="field-hint">已被充值订单占用的卡密不能重复添加。未成功的免付订单可在订单管理中回收，卡密会自动返回原商品库存。</p>
         <textarea id={fieldId} rows={9} maxLength={16384} value={lines} onChange={event => setLines(event.target.value)} required
           autoComplete="off" spellCheck={false} placeholder="每行一条完整卡密，空行会自动忽略。每批最多 200 条。" />
         <div className="admin-voucher-options">

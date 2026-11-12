@@ -228,7 +228,7 @@ test('invalid filters fail explicitly, zero-count products remain visible and ex
   const admin = await login();
   for (const query of ['start=2026-02-30', 'start=2026-01-03&end=2026-01-02', 'environment=invalid', 'environment=all&environment=sandbox', 'extra=1', 'start=2020-01-01']) assert.equal((await request('/api/admin/analytics/products?' + query, undefined, admin.cookie)).response.status, 400, query);
   const empty = (await request('/api/admin/analytics/products', undefined, admin.cookie)).json.data;
-  assert.equal(empty.total, 0); assert.equal(empty.products.length, 5); assert.ok(empty.products.every((row: { clicks: number }) => row.clicks === 0));
+  assert.equal(empty.total, 0); assert.equal(empty.products.length, 6); assert.ok(empty.products.every((row: { clicks: number }) => row.clicks === 0));
   db.prepare("UPDATE admin_sessions SET expires_at = '2000-01-01T00:00:00Z'").run();
   assert.equal((await request('/api/admin/analytics/products', undefined, admin.cookie)).response.status, 401);
   assert.equal(chinaDay(Date.parse('2026-01-01T16:00:00Z')), '2026-01-02');
@@ -248,7 +248,7 @@ test('new schema and click records survive reopening without changing existing c
     db.close(); db = openDatabase(filename);
     assert.equal(db.prepare('SELECT count(*) AS n FROM product_clicks').get()!.n, 1);
     assert.equal(db.prepare('SELECT name FROM products WHERE id = ?').get('chatgpt-plus')!.name, '商家自定义名称');
-    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 25);
+    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 26);
     const legacy = db.prepare("SELECT role, permissions, password_hash FROM admin_accounts WHERE username = 'legacy'").get()!;
     assert.equal(legacy.role, 'admin');
     assert.equal(legacy.password_hash, 'existing-password-hash');

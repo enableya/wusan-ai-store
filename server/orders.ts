@@ -47,6 +47,7 @@ function view(row: Record<string, unknown>): Order {
       ? { originalPriceCents: snapshot.originalPriceCents as number } : {}),
     ...(snapshot.staffCheckout === true ? { staffCheckout: true as const } : {}),
     ...(snapshot.deliveryType === 'voucher' ? { deliveryType: 'voucher' as const } : {}),
+    ...(snapshot.unitLabel === '次' ? { unitLabel: '次' as const } : {}),
   };
 }
 
@@ -226,7 +227,7 @@ export function orderRepository(db: DatabaseSync, gateway: PaymentGateway) {
       if (coupon && input.expectedDiscountCents !== coupon.discountCents) throw new OrderError(409, 'COUPON_CHANGED', '优惠券内容已变更，请重新验证后确认金额。');
       const snapshot = { productId: product.id, productName: product.name, category: product.category, priceCents: coupon?.payableCents ?? product.priceCents,
         originalPriceCents: product.priceCents, couponCode: coupon?.code, discountCents: coupon?.discountCents ?? 0,
-        periodMonths: product.periodMonths, details: product.details, ...(product.deliveryType === 'voucher' ? {deliveryType:'voucher'} : {}), payment: { appId: gateway.appId, sellerId: gateway.sellerId } };
+        periodMonths: product.periodMonths, details: product.details, ...(product.deliveryType === 'voucher' ? {deliveryType:'voucher'} : {}), ...(product.unitLabel ? {unitLabel:product.unitLabel} : {}), payment: { appId: gateway.appId, sellerId: gateway.sellerId } };
       db.prepare(`INSERT INTO orders (id, owner_hash, email, snapshot, status, created_at, expires_at,
         idempotency_key, fingerprint, environment, contact, query_password_hash, terms_version) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, '2026-10-21')`).run(
         id, owner, /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.contact.trim()) ? input.contact.trim() : '', JSON.stringify(snapshot), createdAt, expiresAt, key, fingerprint, environment, contact, passwordHash);
@@ -253,7 +254,7 @@ export function orderRepository(db: DatabaseSync, gateway: PaymentGateway) {
       const now = new Date().toISOString();
       const snapshot = {
         productId: product.id, productName: product.name, category: product.category, priceCents: 0, originalPriceCents: product.priceCents,
-        periodMonths: product.periodMonths, details: product.details, staffCheckout: true, ...(product.deliveryType === 'voucher' ? {deliveryType:'voucher'} : {}),
+        periodMonths: product.periodMonths, details: product.details, staffCheckout: true, ...(product.deliveryType === 'voucher' ? {deliveryType:'voucher'} : {}), ...(product.unitLabel ? {unitLabel:product.unitLabel} : {}),
       };
       // Use the existing redemption-ready state without recording a payment or a referral.
       db.prepare(`INSERT INTO orders (id, owner_hash, email, snapshot, status, created_at, expires_at,

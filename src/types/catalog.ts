@@ -1,7 +1,7 @@
 export type Product = {
   id: string;
   name: string;
-  category: 'Plus' | 'Pro';
+  category: 'Plus' | 'Pro' | 'Codex';
   mark: string;
   color: 'green' | 'blue' | 'rose' | 'gray';
   icon: 'sparkles' | 'orbit' | 'layers' | 'infinity';
@@ -14,6 +14,7 @@ export type Product = {
   currency: 'CNY';
   periodMonths: number;
   deliveryType?: 'voucher';
+  unitLabel?: '次';
   details: {
     entitlements: string | null;
     deliveryMethod: string | null;

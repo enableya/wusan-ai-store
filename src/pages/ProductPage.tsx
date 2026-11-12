@@ -32,11 +32,11 @@ export default function ProductPage() {
   return <div className="product-detail-page"><div className="container product-detail-container page-space">
     <Breadcrumb items={[{ label: '全部商品', to: '/' }, { label: product.name }]} />
     <section className="product-buy-layout" aria-label="商品购买">
-      <div className="product-gallery"><picture><source media="(max-width: 760px)" srcSet={productCardCover(product)} /><img src={productCover(product, true)} alt={`${product.name} 商品图片`} width="800" height="760" /></picture><div className="product-gallery-caption"><span>伍叁 AI</span><span>{product.category} · {product.deliveryType==='voucher'?'成品号':'订阅服务'}</span></div></div>
+      <div className="product-gallery"><picture><source media="(max-width: 760px)" srcSet={productCardCover(product)} /><img src={productCover(product, true)} alt={`${product.name} 商品图片`} width="800" height="760" /></picture><div className="product-gallery-caption"><span>伍叁 AI</span><span>{product.category} · {product.deliveryType==='voucher'?'卡密交付':'订阅服务'}</span></div></div>
       <div className="product-buy-info">
         <div className="product-buy-heading">
           <div>
-            <div className="eyebrow">CHATGPT {product.category.toUpperCase()}{productUsdTier(product) && ` · ${productUsdTier(product)}`}</div>
+            <div className="eyebrow">{product.category === 'Codex' ? 'CODEX' : `CHATGPT ${product.category.toUpperCase()}`}{productUsdTier(product) && ` · ${productUsdTier(product)}`}</div>
             <h1>{product.name}</h1>
           </div>
           <button type="button" className="text-button product-share" onClick={share}>

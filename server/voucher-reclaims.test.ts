@@ -58,6 +58,44 @@ test('reclaim returns an unused staff card to the same inventory and atomically 
   await assert.rejects(f.repo.submit(f.order,f.account.confirmationId,f.input.sessionInput),{code:'VOUCHER_ALREADY_RECLAIMED'});
 });
 
+test('unused Pro 5x cards with provider route IDs return to inventory without reimporting',async t=>{
+  for(const submitted of [false,true]) for(const productId of ['maiofa-gpt-5','chatgpt-pro-5x-new',undefined]) {
+    const f=fixture(t,async()=>Response.json({ok:true,voucher:{state:'AVAILABLE',product:{id:productId}},
+      order:submitted?{orderNo:'CURRENT',orderState:'NO_CHARGE',settlement:{state:'NO_CHARGE'}}:null}));
+    f.db.prepare("UPDATE orders SET snapshot=json_set(snapshot,'$.productId','chatgpt-pro-5x')").run();
+    f.db.prepare("UPDATE voucher_inventory SET product_id='chatgpt-pro-5x'").run();
+    if(submitted)f.db.prepare("UPDATE order_redemptions SET submitted=1,submitted_order_no='CURRENT'").run();
+    const order={...f.order,productId:'chatgpt-pro-5x'};
+    const inventory=voucherInventory(f.db,'sandbox');
+    assert.equal(inventory.listCards(order.productId,0).cards.length,0);
+    await f.repo.reclaim(order,'admin',f.code);
+    const cards=inventory.listCards(order.productId,0).cards;
+    assert.equal(cards.length,1);assert.equal(cards[0].id,Number(f.card.lastInsertRowid));
+    assert.equal(f.db.prepare('SELECT count(*) n FROM voucher_inventory').get()!.n,1);
+    await assert.rejects(f.repo.submit(order,f.account.confirmationId),{code:'VOUCHER_ALREADY_RECLAIMED'});
+  }
+});
+
+test('local product and environment mismatches cannot reclaim even if upstream says available',async t=>{
+  for(const change of ["UPDATE voucher_inventory SET product_id='chatgpt-pro-5x'", "UPDATE voucher_inventory SET environment='production'"]) {
+    const f=fixture(t);f.db.exec(change);
+    await assert.rejects(f.repo.reclaim(f.order,'admin',f.code),{code:'VOUCHER_CANNOT_RECLAIM'});
+    assert.equal(f.calls.length,0);
+  }
+});
+
+test('reimporting a reserved failed card explains the reservation and never duplicates or releases it',async t=>{
+  const f=fixture(t),inventory=voucherInventory(f.db,'sandbox');
+  const input={productId:'chatgpt-plus',lines:f.code,priority:false,skipDuplicates:false};
+  assert.throws(()=>inventory.importBatch(input),{code:'DUPLICATE_VOUCHER',message:/订单占用.*回收/});
+  assert.deepEqual(inventory.importBatch({...input,skipDuplicates:true}),{added:0,skipped:1,reserved:1});
+  assert.equal(f.db.prepare('SELECT count(*) n FROM order_redemptions').get()!.n,1);
+  assert.equal(f.db.prepare('SELECT count(*) n FROM voucher_inventory').get()!.n,1);
+  await f.repo.reclaim(f.order,'admin',f.code);
+  assert.equal(inventory.listCards(input.productId,0).cards.length,1);
+  assert.deepEqual(inventory.importBatch({...input,skipDuplicates:true}),{added:0,skipped:1});
+});
+
 test('submitted staff cards reclaim only a matching terminal order explicitly confirmed not charged',async t=>{
   const f=fixture(t,async()=>Response.json({ok:true,voucher:{state:'AVAILABLE',product:{id:'chatgpt-plus'}},order:{orderNo:'CURRENT',orderState:'CANCELED',settlement:{state:'NO_CHARGE'}}}));
   f.db.prepare("UPDATE order_redemptions SET submitted=1,submitted_order_no='CURRENT'").run();
@@ -65,11 +103,9 @@ test('submitted staff cards reclaim only a matching terminal order explicitly co
   assert.equal(f.db.prepare('SELECT count(*) n FROM order_redemptions').get()!.n,0);
 });
 
-test('used, mismatched, processing, successful and ambiguous provider responses never release a voucher',async t=>{
+test('used, processing, successful and ambiguous provider responses never release a voucher',async t=>{
   const variants=[
     {voucher:{state:'CONSUMED',product:{id:'chatgpt-plus'}},order:null},
-    {voucher:{state:'AVAILABLE',product:{id:'chatgpt-pro-5x'}},order:null},
-    {voucher:{state:'AVAILABLE'},order:null},
     ...[
       {orderState:'QUEUED'}, {orderState:'FULFILLING'}, {orderState:'FULFILLED'},
       {orderState:'CANCELED',settlement:{state:'UNKNOWN'}}, {orderState:'CANCELED',settlement:{state:'PAID'}},
@@ -157,7 +193,7 @@ test('schema 21 migrates without changing existing fulfillment records and recla
     INSERT INTO order_fulfillment_details(order_id,voucher_code,recharge_email) VALUES ('migration-order','HISTORICAL-CARD','historical@example.invalid');`);
   db.exec("ALTER TABLE order_fulfillment_details DROP COLUMN reclaimed_at; ALTER TABLE order_fulfillment_details DROP COLUMN reclaimed_by; PRAGMA user_version=21;");
   db.close();db=openDatabase(path);
-  assert.equal(db.prepare('PRAGMA user_version').get()!.user_version,25);
+  assert.equal(db.prepare('PRAGMA user_version').get()!.user_version,26);
   const history=db.prepare('SELECT * FROM order_fulfillment_details').get()!;
   assert.equal(history.voucher_code,'HISTORICAL-CARD');assert.equal(history.recharge_email,'historical@example.invalid');assert.equal(history.reclaimed_at,null);
   db.prepare("UPDATE order_fulfillment_details SET reclaimed_at='2026-11-11T00:00:00Z',reclaimed_by='historical-admin'").run();

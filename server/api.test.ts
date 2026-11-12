@@ -52,8 +52,8 @@ test('health, HEAD and public response headers', async (t) => {
 test('home, product list and details use the confirmed database prices', async (t) => {
   const { get } = await setup(t);
   const { body: list } = await get('/api/products');
-  assert.deepEqual(list.data.map((product) => product.priceCents), [13000, 66000, 115000, 335000, 8800]);
-  assert.equal(list.data.length, 5);
+  assert.deepEqual(list.data.map((product) => product.priceCents), [13000, 66000, 115000, 335000, 8800, 300]);
+  assert.equal(list.data.length, 6);
   assert.equal(list.data[0].mark, 'Plus');
   for (const product of list.data) {
     const { response, body } = await get<Product>(`/api/products/${product.id}`);
@@ -76,6 +76,7 @@ test('category filtering and invalid parameters are handled explicitly', async (
   const { get } = await setup(t);
   assert.equal((await get('/api/products?category=Plus')).body.data.length, 2);
   assert.equal((await get('/api/products?category=Pro')).body.data.length, 3);
+  assert.equal((await get('/api/products?category=Codex')).body.data[0].id, 'codex-sms');
   for (const path of ['/api/products?category=bad', '/api/products?category=Pro&category=Plus', '/api/products?price=1', '/api/products/%27%20OR%201%3D1', '/api/products/%ZZ']) {
     const { response, body } = await get(path);
     assert.equal(response.status, 400, path);
@@ -92,8 +93,8 @@ test('missing or unpublished products are not exposed', async (t) => {
   assert.equal((await get('/server/data/store.sqlite')).response.status, 404);
   db.prepare('UPDATE products SET active = 0 WHERE id = ?').run('chatgpt-plus');
   assert.equal((await get('/api/products/chatgpt-plus')).response.status, 404);
-  assert.equal((await get('/api/products')).body.data.length, 4);
-  assert.equal((await get<HomeData>('/api/home')).body.data.products.length, 4);
+  assert.equal((await get('/api/products')).body.data.length, 5);
+  assert.equal((await get<HomeData>('/api/home')).body.data.products.length, 5);
 });
 
 test('API never accepts public product or unsupported payment writes', async (t) => {
@@ -140,7 +141,7 @@ test('initialization is persistent and never overwrites edited data or reseeds d
     assert.equal(catalog.findProduct('chatgpt-plus')!.mark, 'Plus');
     assert.equal(catalog.findProduct('chatgpt-plus')!.label, 'Custom label');
     assert.equal(catalog.findProduct('chatgpt-pro-5x'), undefined);
-    assert.equal(catalog.listProducts().length, 4);
+    assert.equal(catalog.listProducts().length, 5);
   } finally {
     db.close();
     for (const suffix of ['', '-wal', '-shm']) rmSync(filename + suffix, { force: true });
@@ -192,6 +193,42 @@ test('schema 24 updates finished-account default copy while retaining merchant c
   }finally{db.close();rmSync(directory,{recursive:true,force:true});}
 });
 
+test('schema 25 adds Codex once and preserves existing products and referenced card history',()=>{
+  const directory=mkdtempSync(join(tmpdir(),'wusan-codex-migration-')),filename=join(directory,'store.sqlite');
+  let db=openDatabase(filename);
+  try {
+    db.prepare("DELETE FROM products WHERE id='codex-sms'").run();
+    db.prepare("UPDATE products SET price_cents=9900 WHERE id='chatgpt-plus-account'").run();
+    const oldSchema=String(db.prepare("SELECT sql FROM sqlite_master WHERE name='products'").get()!.sql)
+      .replace(/CREATE TABLE (?:"products"|products)/,'CREATE TABLE products_v25')
+      .replace("'Plus', 'Pro', 'Codex'","'Plus', 'Pro'");
+    db.exec('PRAGMA foreign_keys=OFF;');
+    db.exec(oldSchema);
+    db.exec('INSERT INTO products_v25 SELECT * FROM products; DROP TABLE products; ALTER TABLE products_v25 RENAME TO products; PRAGMA foreign_keys=ON;');
+    const voucher=db.prepare("INSERT INTO voucher_inventory(product_id,environment,code,priority) VALUES ('chatgpt-plus-account','sandbox','EXISTING-CARD',1)").run();
+    db.prepare("INSERT INTO product_voucher_instructions VALUES ('chatgpt-plus-account','sandbox','商家自定义说明')").run();
+    db.prepare(`INSERT INTO orders(id,owner_hash,email,snapshot,status,created_at,expires_at,idempotency_key,fingerprint,environment)
+      VALUES ('existing-order','owner','','{}','paid','','','existing-key','existing-fingerprint','sandbox')`).run();
+    db.prepare("INSERT INTO order_card_deliveries VALUES ('existing-order',?,'EXISTING-CARD','2026-11-12T00:00:00Z')").run(voucher.lastInsertRowid);
+    const existing=db.prepare('SELECT * FROM products ORDER BY id').all();
+    db.exec('PRAGMA user_version=25;');db.close();db=openDatabase(filename);
+    const product=catalogRepository(db).findProduct('codex-sms')!;
+    assert.equal(product.name,'Codex 接码');assert.equal(product.category,'Codex');assert.equal(product.priceCents,300);
+    assert.equal(product.selectable,true);assert.equal(product.deliveryType,'voucher');assert.equal(product.unitLabel,'次');
+    assert.deepEqual(db.prepare("SELECT * FROM products WHERE id!='codex-sms' ORDER BY id").all(),existing);
+    assert.equal(db.prepare('SELECT instructions FROM product_voucher_instructions').get()!.instructions,'商家自定义说明');
+    assert.equal(db.prepare('SELECT voucher_id FROM order_card_deliveries').get()!.voucher_id,Number(voucher.lastInsertRowid));
+    assert.equal(db.prepare('SELECT voucher_code FROM order_fulfillment_details').get()!.voucher_code,'EXISTING-CARD');
+    assert.equal(db.prepare('PRAGMA foreign_keys').get()!.foreign_keys,1);
+    assert.equal(db.prepare('PRAGMA foreign_key_check').all().length,0);
+    assert.equal(db.prepare('PRAGMA integrity_check').get()!.integrity_check,'ok');
+    db.prepare("UPDATE products SET price_cents=500 WHERE id='codex-sms'").run();db.close();db=openDatabase(filename);
+    assert.equal(catalogRepository(db).findProduct('codex-sms')!.priceCents,500);
+    db.prepare("DELETE FROM products WHERE id='codex-sms'").run();db.close();db=openDatabase(filename);
+    assert.equal(catalogRepository(db).findProduct('codex-sms'),undefined);
+  }finally{db.close();rmSync(directory,{recursive:true,force:true});}
+});
+
 test('database rejects invalid prices and selectable products without a price', async (t) => {
   const { db } = await setup(t);
   for (const price of [-1, 0, 1.5, null]) {
@@ -218,7 +255,7 @@ test('payment migration updates unchanged built-in copy and preserves merchant e
     assert.equal(catalog.faqs()[0].answer, 'Merchant answer');
     assert.match(catalog.faqs()[1].answer, /支付宝网站支付/);
     assert.match(catalog.articles()[0].sections[3].text, /支付宝官方收银台/);
-    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 25);
+    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 26);
   } finally {
     db.close();
     for (const suffix of ['', '-wal', '-shm']) rmSync(filename + suffix, { force: true });

@@ -13,6 +13,7 @@ export type Order = {
   staffCheckout?: true;
   periodMonths: number;
   deliveryType?: 'voucher';
+  unitLabel?: '次';
   cardDelivery?: { delivered: boolean };
   status: 'pending' | 'paid' | 'closed' | 'cancelled';
   fulfillment?: { status: 'succeeded'; rechargeEmail: string | null };

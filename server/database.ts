@@ -11,16 +11,19 @@ export function openDatabase(filename: string) {
   if (filename !== ':memory:') mkdirSync(dirname(filename), { recursive: true });
   const db = new DatabaseSync(filename, { timeout: 5000 });
   try {
-    db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
+    db.exec('PRAGMA journal_mode = WAL;');
+    const initialVersion = Number(db.prepare('PRAGMA user_version').get()!.user_version);
+    // SQLite requires foreign keys off before the transaction when rebuilding a referenced table.
+    db.exec(`PRAGMA foreign_keys = ${initialVersion > 0 && initialVersion < 26 ? 'OFF' : 'ON'};`);
     db.exec('BEGIN IMMEDIATE');
     const version = (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
-    if (version > 25) throw new Error('Database schema is newer than this server supports.');
+    if (version > 26) throw new Error('Database schema is newer than this server supports.');
     if (version === 0) {
       db.exec(`
         CREATE TABLE products (
           id TEXT PRIMARY KEY,
           name TEXT NOT NULL,
-          category TEXT NOT NULL CHECK (category IN ('Plus', 'Pro')),
+          category TEXT NOT NULL CHECK (category IN ('Plus', 'Pro', 'Codex')),
           price_cents INTEGER CHECK (price_cents IS NULL OR price_cents BETWEEN 1 AND 9007199254740991),
           selectable INTEGER NOT NULL CHECK (selectable IN (0, 1)),
           active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
@@ -410,7 +413,29 @@ export function openDatabase(filename: string) {
       }
       db.exec('PRAGMA user_version=25;');
     }
+    if (version < 26) {
+      const table = String(db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='products'").get()!.sql);
+      if (!table.includes("'Codex'")) {
+        const related = db.prepare("SELECT sql FROM sqlite_master WHERE tbl_name='products' AND type IN ('index','trigger') AND sql IS NOT NULL").all();
+        const expanded = table.replace(/CREATE TABLE (?:"products"|products)/, 'CREATE TABLE products_next')
+          .replace("'Plus', 'Pro'", "'Plus', 'Pro', 'Codex'");
+        if (expanded === table || !expanded.includes("'Codex'")) throw new Error('Cannot expand product categories.');
+        db.exec(expanded);
+        db.exec('INSERT INTO products_next SELECT * FROM products; DROP TABLE products;');
+        db.exec('PRAGMA legacy_alter_table=ON;');
+        try { db.exec('ALTER TABLE products_next RENAME TO products;'); }
+        finally { db.exec('PRAGMA legacy_alter_table=OFF;'); }
+        for (const item of related) db.exec(String(item.sql));
+      }
+      const product = products.find(item=>item.id==='codex-sms')!;
+      const {id,name,category,priceCents,selectable,currency,periodMonths,...presentation} = product;
+      db.prepare(`INSERT OR IGNORE INTO products(id,name,category,price_cents,selectable,sort_order,currency,period_months,presentation)
+        VALUES (?,?,?,?,?,5,?,?,?)`).run(id,name,category,priceCents,Number(selectable),currency,periodMonths,JSON.stringify(presentation));
+      db.exec('PRAGMA user_version=26;');
+    }
+    if (db.prepare('PRAGMA foreign_key_check').all().length) throw new Error('Database migration violated foreign keys.');
     db.exec('COMMIT');
+    db.exec('PRAGMA foreign_keys=ON;');
     return db;
   } catch (error) {
     try { db.exec('ROLLBACK'); } catch { /* Initialization may fail before a transaction starts. */ }

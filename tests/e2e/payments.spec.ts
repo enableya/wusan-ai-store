@@ -9,15 +9,15 @@ const example: Order = {
   details: { entitlements: null, deliveryMethod: null, deliveryTime: null, accountRequirements: null, afterSales: null },
 };
 
-for(const width of [390,1440]) {
-  test(`${width}px finished account costs 88 yuan and follows information payment card delivery`,async({page})=>{
+for(const [productId,productName,priceCents,unit] of [['chatgpt-plus-account','ChatGPT Plus 成品号',8800,'份'],['codex-sms','Codex 接码',300,'次']] as const) for(const width of [390,1440]) {
+  test(`${width}px ${productId} follows information payment card delivery`,async({page})=>{
     await page.setViewportSize({width,height:1000});
-    let order:Order={...example,productId:'chatgpt-plus-account',productName:'ChatGPT Plus 成品号',priceCents:8800,deliveryType:'voucher',cardDelivery:{delivered:false}};
+    let order:Order={...example,productId,productName,priceCents,...(productId==='codex-sms'?{unitLabel:'次' as const}:{}),deliveryType:'voucher',cardDelivery:{delivered:false}};
     let claims=0,redemptions=0;
     const code='MOCK-FINISHED-ACCOUNT-CARD-1234567890123456';
     await page.route('**/api/payments/config',route=>route.fulfill({json:{data:{enabled:true,environment:'sandbox',message:'沙箱测试'}}}));
     await page.route('**/api/orders',route=>{
-      expect(route.request().postDataJSON()).toMatchObject({productId:'chatgpt-plus-account',expectedPriceCents:8800});
+      expect(route.request().postDataJSON()).toMatchObject({productId,expectedPriceCents:priceCents});
       return route.fulfill({status:201,json:{data:order}});
     });
     await page.route('**/api/orders/'+order.id,route=>route.fulfill({json:{data:order}}));
@@ -27,11 +27,12 @@ for(const width of [390,1440]) {
       claims++;return route.fulfill({json:{data:{delivered:true,code,deliveredAt:new Date().toISOString(),usageInstructions:'1. 复制卡密。\n2. 按指引使用。<b>这是普通文本</b>'}}});
     });
     await page.route('**/api/orders/'+order.id+'/redemption**',route=>{redemptions++;return route.abort();});
-    await page.goto('/products/chatgpt-plus-account');
-    await expect(page.getByRole('heading',{level:1,name:'ChatGPT Plus 成品号'})).toBeVisible();
-    await expect(page.locator('.product-buy-price')).toContainText('88');
-    await expect(page.locator('.product-buy-price')).toContainText('/ 份');
-    await expect(page.locator('.item-details-content')).toContainText('提供 30 天订阅及封号质保');
+    await page.goto('/products/'+productId);
+    await expect(page.getByRole('heading',{level:1,name:productName})).toBeVisible();
+    await expect(page.locator('.product-buy-price')).toContainText(String(priceCents/100));
+    await expect(page.locator('.product-buy-price')).toContainText(`/ ${unit}`);
+    if(productId==='chatgpt-plus-account')await expect(page.locator('.item-details-content')).toContainText('提供 30 天订阅及封号质保');
+    else {await expect(page.locator('.item-details-content')).toContainText('一次性接码');await expect(page.locator('.item-details-content')).not.toContainText('30 天');}
     await page.getByLabel('验证码',{exact:true}).fill(await page.getByRole('button',{name:/点击更换/}).innerText());
     await page.getByRole('button',{name:'立即购买',exact:true}).click();
     const dialog=page.getByRole('dialog');
@@ -49,7 +50,7 @@ for(const width of [390,1440]) {
     await page.context().grantPermissions(['clipboard-read','clipboard-write']);
     await dialog.getByRole('button',{name:'复制卡密',exact:true}).click();expect(await page.evaluate(()=>navigator.clipboard.readText())).toBe(code);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1)).toBe(false);
-    await dialog.screenshot({path:`artifacts/finished-account-dialog-${width}.png`});
+    await dialog.screenshot({path:`artifacts/${productId}-dialog-${width}.png`});
     await dialog.getByRole('button',{name:'关闭购买弹窗',exact:true}).click();await page.goto('/orders/'+order.id);
     await expect(page.getByRole('region',{name:'获取卡密'})).toContainText(code);
     await expect(page.locator('.spec-list')).not.toContainText('个月');

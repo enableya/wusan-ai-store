@@ -413,7 +413,7 @@ export function createApiServer(db: DatabaseSync, gateway: PaymentGateway = crea
       }
       if (url.pathname === '/api/products') {
         const category = url.searchParams.get('category') || undefined;
-        if (category && !['Plus', 'Pro'].includes(category)) return fail(400, 'INVALID_CATEGORY', '套餐分类无效。');
+        if (category && !['Plus', 'Pro', 'Codex'].includes(category)) return fail(400, 'INVALID_CATEGORY', '套餐分类无效。');
         if ([...url.searchParams.keys()].some((key) => key !== 'category') || url.searchParams.getAll('category').length > 1) {
           return fail(400, 'INVALID_QUERY', '请求参数无效。');
         }
