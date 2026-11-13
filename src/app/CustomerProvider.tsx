@@ -21,7 +21,7 @@ export function CustomerProvider({ children }: {children: ReactNode}) {
   const [shareAfterLogin, setShareAfterLogin] = useState(false);
   const [link, setLink] = useState('');
   const code = new URLSearchParams(location.search).get('ref') || '';
-  const [capture, setCapture] = useState<{ requestedCode: string; invitation: { code: string; expiresAt: number } | null } | null>(null);
+  const [capture, setCapture] = useState<{ requestedCode: string; invitation: { code: string; expiresAt: number | null } | null } | null>(null);
   const [captureError, setCaptureError] = useState(false);
   const [retry, setRetry] = useState(0);
   useEffect(() => { void requestApi<Customer | null>('/customer/session').then(setUser).catch(() => {}); }, []);
@@ -30,8 +30,8 @@ export function CustomerProvider({ children }: {children: ReactNode}) {
     let active = true;
     setCaptureError(false);
     const load = code
-      ? postApi<{ invitation: { code: string; expiresAt: number } | null }>('/referrals/visit', { code }).then(result => result.invitation)
-      : requestApi<{ code: string; expiresAt: number } | null>('/referrals/invitation', AbortSignal.timeout(12000));
+      ? postApi<{ invitation: { code: string; expiresAt: number | null } | null }>('/referrals/visit', { code }).then(result => result.invitation)
+      : requestApi<{ code: string; expiresAt: number | null } | null>('/referrals/invitation', AbortSignal.timeout(12000));
     void load.then(invitation => {
       if (active) setCapture({ requestedCode: code, invitation });
     }).catch(() => {
@@ -45,7 +45,7 @@ export function CustomerProvider({ children }: {children: ReactNode}) {
     if (!capture || (code && code !== capture.requestedCode && code !== capture.invitation?.code)) return;
     const params = new URLSearchParams(location.search);
     const saved = capture.invitation;
-    if (saved && saved.expiresAt > Date.now()) {
+    if (saved) {
       if (params.getAll('ref').length === 1 && code === saved.code) return;
       params.set('ref', saved.code);
     } else {

@@ -1,13 +1,14 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { loadEnv } from 'vite';
+import { referralsMockPlugin } from './scripts/dev/referrals-mock';
 
 export default defineConfig(({ mode, command }) => {
   // The frontend build must not load the API's payment configuration or credentials.
   const port = command === 'serve' ? Number(process.env.API_PORT || loadEnv(mode, process.cwd(), 'API_').API_PORT || 5182) : 5182;
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('API_PORT must be between 1 and 65535.');
   return {
-    plugins: [react()],
+    plugins: [react(), referralsMockPlugin()],
   server: {
     port: 5180,
     strictPort: true,

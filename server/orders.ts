@@ -1,3 +1,5 @@
+import { isSameDeviceReferral } from './referral-eligibility.ts';
+import { paymentControls } from './payment-controls.ts';
 import { cancellationView } from './order-timeout-state.ts';
 import { deliverOrderCard } from './card-delivery.ts';
 import { randomBytes, createHash } from 'node:crypto';
@@ -53,6 +55,7 @@ function view(row: Record<string, unknown>): Order {
 
 export function orderRepository(db: DatabaseSync, gateway: PaymentGateway) {
   const catalog = catalogRepository(db);
+  const paymentSwitches = paymentControls(db,gateway.status.environment);
   const { environment } = gateway.status;
   const coupons = couponRepository(db, environment);
   const completedFulfillment = db.prepare(`SELECT f.recharge_email FROM order_redemptions r
@@ -116,6 +119,7 @@ export function orderRepository(db: DatabaseSync, gateway: PaymentGateway) {
     ready();
     const order = owned(id, owner);
     sameEnvironment(order);
+    paymentSwitches.assertEnabled(order.productId);
     if (order.status !== 'pending') throw new OrderError(409, 'ORDER_NOT_PENDING', '订单已付款或已关闭，请查看订单状态。');
     if (Date.parse(order.expiresAt) <= Date.now()) throw new OrderError(409, 'ORDER_EXPIRED', '付款时间已结束，请先查询支付结果；确认未付款后可重新下单。');
     return order;
@@ -194,6 +198,7 @@ export function orderRepository(db: DatabaseSync, gateway: PaymentGateway) {
         || typeof input.queryPassword !== 'string' || !validQueryPassword(input.queryPassword)) {
         throw new OrderError(400, 'INVALID_ORDER', '请填写有效的联系方式和查询密码。');
       }
+      paymentSwitches.assertEnabled(input.productId);
       const contact = normalizeContact(input.contact);
       const fingerprint = hash(JSON.stringify([input.productId, contact, input.expectedPriceCents, typeof input.couponCode === 'string' ? input.couponCode.trim().toUpperCase() : '']));
       const existing = db.prepare('SELECT * FROM orders WHERE owner_hash = ? AND idempotency_key = ?').get(owner, key);
@@ -216,6 +221,7 @@ export function orderRepository(db: DatabaseSync, gateway: PaymentGateway) {
         if (repeated.environment !== environment || repeated.fingerprint !== fingerprint || !await verifyPassword(input.queryPassword, String(repeated.query_password_hash || ''))) throw new OrderError(409, 'IDEMPOTENCY_CONFLICT', '该提交编号已用于其他订单，请刷新后重试。');
         return toView(repeated);
       }
+      paymentSwitches.assertEnabled(input.productId);
       const current = catalog.findProduct(input.productId);
       if (!current?.selectable || current.priceCents !== product.priceCents) throw new OrderError(409, 'PRICE_CHANGED', '商品或价格已更新，请刷新后重试。');
       const id = `WS${Date.now()}${randomBytes(8).toString('hex')}`;
@@ -223,6 +229,7 @@ export function orderRepository(db: DatabaseSync, gateway: PaymentGateway) {
       const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
       db.exec('BEGIN IMMEDIATE');
       try {
+      paymentSwitches.assertEnabled(product.id);
       const coupon = input.couponCode ? coupons.quote(input.couponCode, product.id) : null;
       if (coupon && input.expectedDiscountCents !== coupon.discountCents) throw new OrderError(409, 'COUPON_CHANGED', '优惠券内容已变更，请重新验证后确认金额。');
       const snapshot = { productId: product.id, productName: product.name, category: product.category, priceCents: coupon?.payableCents ?? product.priceCents,
@@ -232,8 +239,15 @@ export function orderRepository(db: DatabaseSync, gateway: PaymentGateway) {
         idempotency_key, fingerprint, environment, contact, query_password_hash, terms_version) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, '2026-10-21')`).run(
         id, owner, /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.contact.trim()) ? input.contact.trim() : '', JSON.stringify(snapshot), createdAt, expiresAt, key, fingerprint, environment, contact, passwordHash);
       if (coupon) db.prepare('INSERT INTO coupon_orders(coupon_id,order_id,discount_cents) VALUES (?,?,?)').run(coupon.id,id,coupon.discountCents);
-      if (referral) db.prepare('INSERT INTO referral_orders(order_id, inviter_id, buyer_id, created_at) VALUES (?, ?, ?, ?)')
-        .run(id, referral.inviterId, referral.buyerId, createdAt);
+      if (referral) {
+        const reason = referral.inviterId === referral.buyerId ? 'self_invite'
+          : isSameDeviceReferral(db,owner,referral.inviterId,referral.buyerId) ? 'same_device'
+          : product.id === 'codex-sms' ? 'product_excluded' : null;
+        if (reason) db.prepare('INSERT INTO referral_order_exclusions(order_id,inviter_id,buyer_id,reason_code,created_at) VALUES (?,?,?,?,?)')
+          .run(id,referral.inviterId,referral.buyerId,reason,createdAt);
+        else db.prepare('INSERT INTO referral_orders(order_id,inviter_id,buyer_id,created_at) VALUES (?,?,?,?)')
+          .run(id,referral.inviterId,referral.buyerId,createdAt);
+      }
       db.exec('COMMIT');
       } catch (error) { db.exec('ROLLBACK'); throw error; }
       return owned(id, owner);

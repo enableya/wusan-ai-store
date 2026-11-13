@@ -723,3 +723,71 @@ test('coupon management requires permission and validates restrictions', async t
   assert.equal((await request('/api/coupons/quote', { code, productId: 'chatgpt-plus' })).response.status, 400);
   assert.equal(db.prepare('SELECT count(*) AS n FROM coupon_orders WHERE coupon_id=?').get(id)!.n, 1);
 });
+
+test('payment switches default on, block new and existing checkout, reopen independently and still accept verified payments',async t=>{
+  const {db,request,notify}=await setup(t);
+  const {paymentControls}=await import('./payment-controls.ts');
+  const controls=paymentControls(db,'sandbox');
+  assert.equal(controls.list().enabled,true);assert.ok(controls.list().products.every(p=>p.enabled));
+  const created=await request('/api/orders',input),order=created.body.data;
+  const browserCookie=created.response.headers.get('set-cookie')!.split(';')[0];
+  db.prepare("INSERT INTO admin_accounts(username,password_hash,created_at,role) VALUES ('pay-admin',?,?,'super_admin')").run(await hashAdminPassword('payment-switch-test'),new Date().toISOString());
+  const login=await request('/api/admin/login',{username:'pay-admin',password:'payment-switch-test'});
+  const adminCookie=login.response.headers.get('set-cookie')!.split(';')[0];
+  const path='/api/admin/payments/settings';
+  const change=async(productId:string|null,enabled:boolean)=>request<import('../src/types/admin.ts').PaymentControls>(path,{productId,enabled,version:controls.list().version},{cookie:adminCookie});
+  assert.equal((await change('chatgpt-plus',false)).response.status,200);
+  const config=await request<PaymentConfig>('/api/payments/config');
+  assert.equal(config.body.data.enabled,true);assert.deepEqual(config.body.data.blockedProductIds,['chatgpt-plus']);
+  for(const action of ['payment','payment-qr'])assert.equal((await request(`/api/orders/${order.id}/${action}`,{},{cookie:browserCookie})).body.error.code,'PRODUCT_PAYMENT_PAUSED');
+  assert.equal((await request('/api/orders',input,{cookie:browserCookie,key:randomUUID()})).body.error.code,'PRODUCT_PAYMENT_PAUSED');
+  const codexOrder=await request('/api/orders',{...input,productId:'codex-sms',expectedPriceCents:300},{cookie:browserCookie,key:randomUUID()});
+  assert.equal(codexOrder.response.status,201);
+  await change(null,false);
+  const paused=await request<PaymentConfig>('/api/payments/config');assert.equal(paused.body.data.enabled,false);assert.equal(paused.body.data.globallyPaused,true);assert.equal(paused.body.data.gatewayEnabled,true);
+  assert.equal((await request('/api/orders',{...input,productId:'codex-sms',expectedPriceCents:300},{cookie:browserCookie,key:randomUUID()})).body.error.code,'PAYMENT_PAUSED');
+  assert.equal((await request(`/api/orders/${order.id}/payment`,{},{cookie:browserCookie})).body.error.code,'PAYMENT_PAUSED');
+  // A valid payment already completed outside the site must still be recorded while paused.
+  assert.equal((await notify({out_trade_no:order.id})).status,200);
+  assert.equal(db.prepare('SELECT status FROM orders WHERE id=?').get(order.id)!.status,'paid');
+  await change(null,true);
+  assert.equal((await request(`/api/orders/${codexOrder.body.data.id}/payment-qr`,{},{cookie:browserCookie})).response.status,200);
+  assert.equal(controls.list().products.find(p=>p.id==='chatgpt-plus')!.enabled,false);
+  await change('chatgpt-plus',true);
+  assert.equal((await request('/api/orders',input,{cookie:browserCookie,key:randomUUID()})).response.status,201);
+  assert.equal(db.prepare('SELECT count(*) n FROM payment_control_events').get()!.n,4);
+});
+
+test('payment management requires its own permission and same origin; stale versions and other environments cannot override it',async t=>{
+  const {db,request}=await setup(t);
+  const {paymentControls}=await import('./payment-controls.ts');
+  const {insertAdminAccount}=await import('./admin.ts');
+  const password=await hashAdminPassword('payment-access-test');
+  insertAdminAccount(db,'viewer',password,'admin',['vouchers.view']);
+  insertAdminAccount(db,'pay-manager',password,'admin',['payments.manage']);
+  const path='/api/admin/payments/settings';
+  assert.equal((await request(path)).response.status,401);
+  const viewer=await request('/api/admin/login',{username:'viewer',password:'payment-access-test'});
+  assert.equal((await request(path,undefined,{cookie:viewer.response.headers.get('set-cookie')!.split(';')[0]})).response.status,403);
+  const manager=await request('/api/admin/login',{username:'pay-manager',password:'payment-access-test'});
+  const cookie=manager.response.headers.get('set-cookie')!.split(';')[0];
+  const change={productId:null,enabled:false,version:0};
+  assert.equal((await request(path,change,{cookie,origin:'https://evil.example'})).response.status,403);
+  assert.equal((await request(path,{...change,enabled:'false'},{cookie})).response.status,400);
+  assert.equal((await request(path,{...change,productId:'missing-product'},{cookie})).response.status,404);
+  assert.equal((await request(path,change,{cookie})).response.status,200);
+  assert.equal((await request(path,{...change,enabled:true},{cookie})).response.status,409);
+  assert.equal(paymentControls(db,'production').list().enabled,true);
+  db.prepare("UPDATE admin_accounts SET permissions='[]' WHERE username='pay-manager'").run();
+  assert.equal((await request(path,{...change,version:1,enabled:true},{cookie})).response.status,403);
+  assert.equal(paymentControls(db,'sandbox').list().enabled,false);
+});
+
+test('closing payment during asynchronous order creation cannot create a pending order',async t=>{
+  const {db}=await setup(t);const {paymentControls}=await import('./payment-controls.ts');
+  const repo=orderRepository(db,gateway),controls=paymentControls(db,'sandbox');
+  const creating=repo.create('race-owner',input,randomUUID());
+  controls.update({productId:null,enabled:false,version:0},'admin');
+  await assert.rejects(creating,{code:'PAYMENT_PAUSED'});
+  assert.equal(db.prepare('SELECT count(*) n FROM orders').get()!.n,0);
+});

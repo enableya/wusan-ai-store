@@ -52,7 +52,7 @@ test('health, HEAD and public response headers', async (t) => {
 test('home, product list and details use the confirmed database prices', async (t) => {
   const { get } = await setup(t);
   const { body: list } = await get('/api/products');
-  assert.deepEqual(list.data.map((product) => product.priceCents), [13000, 66000, 115000, 335000, 8800, 300]);
+  assert.deepEqual(list.data.map((product) => product.priceCents), [13000, 8800, 66000, 115000, 335000, 300]);
   assert.equal(list.data.length, 6);
   assert.equal(list.data[0].mark, 'Plus');
   for (const product of list.data) {
@@ -255,10 +255,32 @@ test('payment migration updates unchanged built-in copy and preserves merchant e
     assert.equal(catalog.faqs()[0].answer, 'Merchant answer');
     assert.match(catalog.faqs()[1].answer, /支付宝网站支付/);
     assert.match(catalog.articles()[0].sections[3].text, /支付宝官方收银台/);
-    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 26);
+    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 31);
   } finally {
     db.close();
     for (const suffix of ['', '-wal', '-shm']) rmSync(filename + suffix, { force: true });
     rmdirSync(directory);
   }
+});
+
+test('schema 26 introduces enabled payment controls without changing existing data and preserves switches on restart',async()=>{
+  const {paymentControls}=await import('./payment-controls.ts');
+  const directory=mkdtempSync(join(tmpdir(),'wusan-payment-switches-')),file=join(directory,'store.sqlite');
+  let db=openDatabase(file);
+  try{
+    const products=db.prepare('SELECT * FROM products ORDER BY id').all();
+    db.exec('DROP TABLE payment_control_events; DROP TABLE product_payment_controls; DROP TABLE payment_controls; PRAGMA user_version=26;');
+    db.close();db=openDatabase(file);
+    const controls=paymentControls(db,'sandbox');
+    assert.equal(controls.list().enabled,true);assert.ok(controls.list().products.every(p=>p.enabled));
+    assert.deepEqual(db.prepare('SELECT * FROM products ORDER BY id').all(),products);
+    controls.update({productId:'codex-sms',enabled:false,version:0},'admin');
+    controls.update({productId:null,enabled:false,version:1},'admin');
+    db.close();db=openDatabase(file);
+    assert.equal(paymentControls(db,'sandbox').list().enabled,false);
+    assert.equal(paymentControls(db,'sandbox').list().products.find(p=>p.id==='codex-sms')!.enabled,false);
+    assert.equal(paymentControls(db,'production').list().enabled,true);
+    assert.equal(db.prepare('SELECT count(*) n FROM payment_control_events').get()!.n,2);
+    assert.equal(db.prepare('PRAGMA integrity_check').get()!.integrity_check,'ok');
+  }finally{db.close();rmSync(directory,{recursive:true,force:true});}
 });

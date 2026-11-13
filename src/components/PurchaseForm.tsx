@@ -1,15 +1,16 @@
+import type { PaymentConfig } from '../types/orders';
+import { usePaymentConfig } from '../hooks/usePaymentConfig';
 import './admin-coupons.css';
 import { useMessage } from '../app/MessageProvider';
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Icon } from './Icon';
-import { useApiResource } from '../hooks/useApiResource';
 import { postApi } from '../services/api';
 import { validContact, validNewQueryPassword } from '../lib/order-input';
 import { money } from '../lib/format';
 import type { Product } from '../types/catalog';
-import type { Order, PaymentConfig } from '../types/orders';
+import type { Order } from '../types/orders';
 
 export function PurchaseSummary({ product, environment }: { product: Product; environment?: PaymentConfig['environment'] }) {
   return <>
@@ -23,7 +24,7 @@ export type CouponQuote = { code: string; discountCents: number; originalCents: 
 export function PurchaseForm({ product, onCreated, onQuoteChange }: {
   product: Product; onCreated?: (order: Order) => void; onQuoteChange?: (quote: CouponQuote | null) => void;
 }) {
-  const payment = useApiResource<PaymentConfig>('/payments/config');
+  const payment = usePaymentConfig(product.id);
   const navigate = useNavigate();
   const [contact, setContact] = useState('');
   const [password, setPassword] = useState('');
@@ -40,8 +41,8 @@ export function PurchaseForm({ product, onCreated, onQuoteChange }: {
   const form = useRef<HTMLFormElement>(null);
   const selectable = product.selectable && product.priceCents !== null;
   const sandbox = payment.data?.environment === 'sandbox';
-  const sandboxPreview = !onCreated && sandbox;
-  const canPay = payment.data?.enabled === true;
+  const sandboxPreview = !onCreated && sandbox && !payment.paused;
+  const canPay = payment.data?.enabled === true && !payment.paused;
   const change = () => { key.current = crypto.randomUUID(); };
   useEffect(() => { onQuoteChange?.(coupon); }, [coupon, onQuoteChange]);
   useEffect(() => {
@@ -101,7 +102,7 @@ export function PurchaseForm({ product, onCreated, onQuoteChange }: {
     <div className="purchase-field coupon-entry"><label htmlFor="coupon-code">优惠码（选填）</label><div className="coupon-entry-row"><input id="coupon-code" value={couponInput} maxLength={40} disabled={busy} placeholder="输入优惠码" aria-busy={couponBusy} onBlur={() => void applyCoupon()} onChange={event => { couponRequest.current++; quotedInput.current = ''; setCouponBusy(false); setCouponInput(event.target.value); setCoupon(null); change(); }} /></div>{coupon && <p className="coupon-entry-note">已优惠 ¥{money(coupon.discountCents)}，应付 ¥{money(coupon.payableCents)}</p>}</div>
     {!onCreated && <PurchaseSummary product={product} environment={payment.data?.environment} />}
     <button className="button primary full-width buy-now" type="submit" disabled={busy || couponBusy || !selectable || (!canPay && !sandboxPreview)}>{busy ? '正在创建订单…' : onCreated ? '继续付款' : '立即购买'}<Icon name="arrow-right" /></button>
-    {!selectable ? <p className="field-hint payment-availability">商品暂未开放购买。</p> : !canPay && <p className="field-hint payment-availability">{payment.error ? null : payment.loading ? '正在确认支付状态…' : sandbox ? payment.data?.message : '支付宝收款暂未开放。'}{payment.error && <button type="button" className="text-button" onClick={payment.reload}>重试</button>}</p>}
+    {!selectable ? <p className="field-hint payment-availability">商品暂未开放购买。</p> : !canPay && <p className="field-hint payment-availability">{payment.error ? null : payment.loading ? '正在确认支付状态…' : payment.paused || sandbox ? payment.data?.message : '支付宝收款暂未开放。'}{payment.error && <button type="button" className="text-button" onClick={payment.reload}>重试</button>}</p>}
     {canPay && sandbox && <p className="field-hint payment-availability">当前为沙箱测试，请使用沙箱买家账号付款，不产生真实扣款。</p>}
   </form>;
 }

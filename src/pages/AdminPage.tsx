@@ -1,3 +1,4 @@
+import { AdminPaymentControls } from '../components/AdminPaymentControls';
 import { useMessage } from '../app/MessageProvider';
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
@@ -55,6 +56,7 @@ const adminModules = [
   { id: 'analytics', title: '商品点击分析', permission: 'analytics.view', icon: 'columns-3', to: '/admin' },
   { id: 'orders', title: '订单管理', permission: 'orders.view', icon: 'receipt-text', to: '/admin?tab=orders' },
   { id: 'refunds', title: '退款审核', permission: 'orders.refund', icon: 'shield-check', to: '/admin?tab=refunds' },
+  { id: 'payments', title: '支付管理', permission: 'payments.manage', icon: 'credit-card', to: '/admin?tab=payments' },
   { id: 'vouchers', title: '卡密管理', permission: 'vouchers.view', icon: 'package', to: '/admin?tab=vouchers' },
   { id: 'coupons', title: '优惠券管理', permission: 'coupons.manage', icon: 'receipt-text', to: '/admin?tab=coupons' },
   { id: 'referrals', title: '邀请返利', permission: 'referrals.view', icon: 'receipt-text', to: '/admin?tab=referrals' },
@@ -116,6 +118,7 @@ function Dashboard({ account, onExpired }: { account: AdminAccess; onExpired: ()
     <div className="admin-workspace"><header className="admin-topbar"><span>工作台 {currentModule && <><Icon name="chevron-right" />{currentModule.title}</>}</span><div><span className="admin-user"><Icon name="user-round" />{account.username}</span><button onClick={logout} disabled={loggingOut}>{loggingOut ? '正在退出…' : '退出登录'}</button></div></header>
       <main className="admin-content">
         {!currentModule && <div className="admin-heading"><div><h1>管理后台</h1><p>当前账号暂无可访问的管理模块。</p></div></div>}
+        {currentModule?.id === 'payments' && <AdminPaymentControls onExpired={onExpired} />}
         {currentModule?.id === 'orders' && <AdminOrders onExpired={onExpired} />}
         {currentModule?.id === 'refunds' && <AdminRefundReviews onExpired={onExpired} />}
         {currentModule?.id === 'coupons' && <AdminCoupons onExpired={onExpired} />}

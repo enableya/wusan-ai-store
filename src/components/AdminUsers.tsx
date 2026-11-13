@@ -1,13 +1,15 @@
 import { useMessage } from '../app/MessageProvider';
 import { useState } from 'react';
-import type { FormEvent } from 'react';
+import type { FormEvent, KeyboardEvent } from 'react';
 import { Pencil, Plus, ShieldCheck, Trash2, UserRound } from 'lucide-react';
 import { Dialog } from './Dialog';
 import { AdminTable } from './AdminTable';
 import { useApiResource } from '../hooks/useApiResource';
 import { ApiError, postApi } from '../services/api';
+import { formatDate } from '../lib/format';
+import './admin-users.css';
 import { adminPermissions, impliedAdminPermissions, staffCheckoutUsername } from '../types/admin';
-import type { AdminAccount, AdminPermission, AdminRole } from '../types/admin';
+import type { AdminAccount, AdminPermission, AdminRole, AdminCustomerList } from '../types/admin';
 
 const roles = { admin: '普通管理员', super_admin: '超级管理员' } as const;
 const permissionsList = Object.keys(adminPermissions) as AdminPermission[];
@@ -129,7 +131,7 @@ function StaffCheckoutSettings({ onExpired }: { onExpired: () => void }) {
   </section>;
 }
 
-export function AdminUsers({ username, onExpired }: { username: string; onExpired: () => void }) {
+function AdministratorUsers({ username, onExpired }: { username: string; onExpired: () => void }) {
   const accounts = useApiResource<AdminAccount[]>('/admin/users');
   const [dialog, setDialog] = useState<AccountDialog | null>(null);
   const $message = useMessage();
@@ -146,7 +148,7 @@ export function AdminUsers({ username, onExpired }: { username: string; onExpire
   }
 
   return <>
-    <div className="admin-heading admin-users-heading"><div><h1>用户管理</h1><p>管理后台账号、角色与模块权限。</p></div>
+    <div className="admin-user-toolbar">
       <button className="button primary" type="button" onClick={() => open({ type: 'add' })}><Plus aria-hidden="true" />新增管理员</button>
     </div>
     <section className="admin-panel admin-list-panel" aria-labelledby="admin-account-list-title">
@@ -173,8 +175,48 @@ export function AdminUsers({ username, onExpired }: { username: string; onExpire
         </tr>)}</tbody>
       </AdminTable>}
     </section>
-    {username === staffCheckoutUsername && <StaffCheckoutSettings onExpired={onExpired} />}
     {dialog?.type === 'delete' && <DeleteAccountDialog account={dialog.account} onSaved={saved} onCancel={close} onExpired={onExpired} />}
     {(dialog?.type === 'add' || dialog?.type === 'edit') && <AccountForm account={dialog.type === 'edit' ? dialog.account : null} onSaved={saved} onCancel={close} onExpired={onExpired} />}
+  </>;
+}
+
+function ShopUsers({onExpired}:{onExpired:()=>void}){
+  const [query,setQuery]=useState(''),[filter,setFilter]=useState({q:'',page:1});
+  const resource=useApiResource<AdminCustomerList>('/admin/customers?'+new URLSearchParams({q:filter.q,page:String(filter.page)}),{keepDataWhileReloading:true});
+  const data=resource.data;
+  function search(event:FormEvent){event.preventDefault();setFilter({q:query.trim(),page:1});resource.reload();}
+  return <section className="admin-panel admin-list-panel" aria-labelledby="shop-user-list-title">
+    <div className="admin-panel-title admin-shop-user-heading"><div><h2 id="shop-user-list-title">商城用户列表</h2>{data&&<p>{data.total} 个账号</p>}</div>
+      <form className="admin-user-search" onSubmit={search}><label className="sr-only" htmlFor="shop-user-search">搜索商城账号</label>
+        <input id="shop-user-search" type="search" maxLength={40} placeholder="搜索商城账号" value={query} onChange={e=>setQuery(e.target.value)} />
+        <button type="submit" className="button secondary" disabled={resource.loading}>查询</button>
+        <button type="button" className="button secondary" disabled={resource.loading} onClick={()=>{setQuery('');setFilter({q:'',page:1});resource.reload();}}>重置</button></form></div>
+    {resource.loading&&!data&&<p className="admin-loading" role="status">正在读取商城用户…</p>}
+    {resource.error&&<p><button type="button" className="text-button" onClick={resource.error.status===401?onExpired:resource.reload}>重新读取商城用户</button></p>}
+    {data&&<><AdminTable labelledBy="shop-user-list-title" emptyState={!data.users.length?<p>{filter.q?'没有找到匹配的商城用户。':'暂无商城用户。'}</p>:undefined}>
+      <thead><tr><th scope="col">商城账号</th><th scope="col">注册时间</th></tr></thead>
+      <tbody>{data.users.map(user=><tr key={user.id}><td><strong>{user.username}</strong></td><td>{formatDate(user.createdAt)}</td></tr>)}</tbody>
+    </AdminTable><div className="admin-user-pagination"><span>第 {data.page} 页，共 {data.total} 个账号</span>
+      <button type="button" className="button secondary" disabled={data.page<=1||resource.loading} onClick={()=>setFilter(current=>({...current,page:current.page-1}))}>上一页</button>
+      <button type="button" className="button secondary" disabled={data.page*data.pageSize>=data.total||resource.loading} onClick={()=>setFilter(current=>({...current,page:current.page+1}))}>下一页</button></div></>}
+  </section>;
+}
+
+export function AdminUsers({username,onExpired}:{username:string;onExpired:()=>void}){
+  const [tab,setTab]=useState<'customers'|'admins'>('customers');
+  function navigate(event:KeyboardEvent<HTMLButtonElement>){
+    if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
+    event.preventDefault();const next=event.key==='Home'?'customers':event.key==='End'?'admins':tab==='customers'?'admins':'customers';
+    setTab(next);event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`[id="user-tab-${next}"]`)?.focus();
+  }
+  return <>
+    <div className="admin-heading admin-users-heading"><div><h1>用户管理</h1><p>分别查看商城注册用户和管理后台账号。</p></div></div>
+    <div className="admin-user-tabs" role="tablist" aria-label="用户类型">
+      {([{id:'customers',name:'商城用户'},{id:'admins',name:'管理员'}] as const).map(item=><button key={item.id} id={'user-tab-'+item.id} role="tab" type="button"
+        aria-selected={tab===item.id} aria-controls={'user-panel-'+item.id} tabIndex={tab===item.id?0:-1} onClick={()=>setTab(item.id)} onKeyDown={navigate}>{item.id==='customers'?<UserRound aria-hidden="true"/>:<ShieldCheck aria-hidden="true"/>}<span>{item.name}</span></button>)}
+    </div>
+    <div role="tabpanel" id={'user-panel-'+tab} aria-labelledby={'user-tab-'+tab}>
+      {tab==='customers'?<><ShopUsers onExpired={onExpired}/>{username===staffCheckoutUsername&&<StaffCheckoutSettings onExpired={onExpired}/>}</>:<AdministratorUsers username={username} onExpired={onExpired}/>}
+    </div>
   </>;
 }

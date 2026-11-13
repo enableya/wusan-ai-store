@@ -12,6 +12,15 @@ export const products: Product[] = [
     details: { entitlements: null, deliveryMethod: null, deliveryTime: null, accountRequirements: null, afterSales: null },
   },
   {
+    id: 'chatgpt-plus-account', name: 'ChatGPT Plus 成品号', category: 'Plus',
+    mark: '成品号', color: 'blue', icon: 'sparkles', label: '成品号',
+    description: '提供账号密码直接使用，提供登录教程，质保 30 天（订阅及封号）。',
+    audience: '需要成品号的用户', priceCents: 8800, selectable: true,
+    features: ['提供账号密码直接使用', '质保 30 天', '提供登录教程，保障订阅及封号'],
+    currency: 'CNY', periodMonths: 1, deliveryType: 'voucher',
+    details: { entitlements: '付款后提供 ChatGPT 账号密码，可直接登录使用，并提供登录教程。', deliveryMethod: '付款确认后在订单中获取卡密', deliveryTime: null, accountRequirements: '无需提交个人账号 Session', afterSales: '付款后提供 GPT 账号密码，可直接登录使用，并提供登录教程。提供 30 天订阅及封号质保。' },
+  },
+  {
     id: 'chatgpt-pro-5x', name: 'ChatGPT Pro 5x', category: 'Pro',
     mark: '5×', color: 'blue', icon: 'orbit', label: '进阶探索',
     description: '让专注的时间，有更多可能。',
@@ -37,15 +46,6 @@ export const products: Product[] = [
     features: ['个人账号订阅', '按月选择，不自动扣费', '服务条件购买前确认'],
     currency: 'CNY', periodMonths: 1,
     details: { entitlements: null, deliveryMethod: null, deliveryTime: null, accountRequirements: null, afterSales: null },
-  },
-  {
-    id: 'chatgpt-plus-account', name: 'ChatGPT Plus 成品号', category: 'Plus',
-    mark: '成品号', color: 'blue', icon: 'sparkles', label: '成品号',
-    description: '提供账号密码直接使用，提供登录教程，质保 30 天（订阅及封号）。',
-    audience: '需要成品号的用户', priceCents: 8800, selectable: true,
-    features: ['提供账号密码直接使用', '质保 30 天', '提供登录教程，保障订阅及封号'],
-    currency: 'CNY', periodMonths: 1, deliveryType: 'voucher',
-    details: { entitlements: '付款后提供 ChatGPT 账号密码，可直接登录使用，并提供登录教程。', deliveryMethod: '付款确认后在订单中获取卡密', deliveryTime: null, accountRequirements: '无需提交个人账号 Session', afterSales: '付款后提供 GPT 账号密码，可直接登录使用，并提供登录教程。提供 30 天订阅及封号质保。' },
   },
   {
     id: 'codex-sms', name: 'Codex 接码', category: 'Codex',

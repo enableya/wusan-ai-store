@@ -248,7 +248,7 @@ test('new schema and click records survive reopening without changing existing c
     db.close(); db = openDatabase(filename);
     assert.equal(db.prepare('SELECT count(*) AS n FROM product_clicks').get()!.n, 1);
     assert.equal(db.prepare('SELECT name FROM products WHERE id = ?').get('chatgpt-plus')!.name, '商家自定义名称');
-    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 26);
+    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version, 31);
     const legacy = db.prepare("SELECT role, permissions, password_hash FROM admin_accounts WHERE username = 'legacy'").get()!;
     assert.equal(legacy.role, 'admin');
     assert.equal(legacy.password_hash, 'existing-password-hash');
@@ -311,8 +311,9 @@ test('voucher imports are protected, atomic, and counted by product and environm
 
   db.prepare('INSERT INTO voucher_inventory (product_id, environment, code, priority) VALUES (?, ?, ?, ?)').run('chatgpt-plus', 'production', 'TEST-ONE', 0);
   const report = await request(path, undefined, cookie);
-  assert.deepEqual(report.json.data.products.slice(0, 2), [
+  assert.deepEqual(report.json.data.products.slice(0, 3), [
     { id: 'chatgpt-plus', name: 'ChatGPT Plus', total: 2, priority: 2 },
+    { id: 'chatgpt-plus-account', name: 'ChatGPT Plus 成品号', total: 0, priority: 0, deliveryType: 'voucher', usageInstructions: '' },
     { id: 'chatgpt-pro-5x', name: 'ChatGPT Pro 5x', total: 1, priority: 0 },
   ]);
   assert.doesNotMatch(JSON.stringify(report.json), /TEST-ONE|TEST-TWO|TEST-THREE/);
@@ -530,4 +531,30 @@ test('payment category filters combine with status and classify exemptions by th
   assert.deepEqual(combined.orders.map(order=>order.id),['CATEGORY-CANCELLED']);assert.equal(combined.counts.cancelled,1);
   assert.equal((await read('paymentType=')).total,4);
   for(const query of ['paymentType=invalid','paymentType=free&paymentType=paid']) assert.equal((await request('/api/admin/orders?'+query,undefined,cookie)).response.status,400);
+});
+
+test('shop user listing is separate from administrator accounts, protected, paginated and never returns credentials',async t=>{
+  const {db,request,login}=await setup(t);
+  const add=db.prepare('INSERT INTO customers(id,username,password_hash,invite_code,created_at) VALUES (?,?,?,?,?)');
+  for(let i=0;i<25;i++)add.run(String(i).padStart(32,'0'),'shop-'+String(i).padStart(3,'0'),'private-customer-password-hash',String(i).padStart(16,'0'),'2026-11-13T00:00:00Z');
+  add.run('f'.repeat(32),'literal_name','private-customer-password-hash','f'.repeat(16),'2026-11-13T00:00:00Z');
+  assert.equal((await request('/api/admin/customers')).response.status,401);
+  insertAdminAccount(db,'readonly-viewer',await hashAdminPassword('user-viewer-test-password'),'admin',['orders.view']);
+  const viewer=await request('/api/admin/login',{username:'readonly-viewer',password:'user-viewer-test-password'});
+  assert.equal((await request('/api/admin/customers',undefined,viewer.cookie)).response.status,403);
+  const admin=await login();
+  async function list(query=''){
+    const response=await request('/api/admin/customers'+query,undefined,admin.cookie);
+    return {status:response.response.status,data:response.json.data as unknown as import('../src/types/admin.ts').AdminCustomerList};
+  }
+  const first=await list(),second=await list('?page=2');
+  assert.equal(first.status,200);assert.equal(first.data.total,26);assert.equal(first.data.users.length,20);assert.equal(second.data.users.length,6);
+  assert.equal(new Set([...first.data.users,...second.data.users].map(user=>user.id)).size,26);
+  for(const user of first.data.users)assert.deepEqual(Object.keys(user).sort(),['createdAt','id','username']);
+  assert.doesNotMatch(JSON.stringify(first),/password|invite_code|token|private-customer/);
+  const literal=await list('?q=_');assert.equal(literal.data.total,1);assert.equal(literal.data.users[0].username,'literal_name');
+  assert.equal((await list('?q=admin')).data.total,0);
+  assert.equal((await list('?q=shop-00')).data.total,10);
+  for(const query of ['?page=0','?page=-1','?page=1.5','?page=1&page=2','?q='+('a'.repeat(41)),'?other=x'])assert.equal((await list(query)).status,400);
+  assert.equal(db.prepare('SELECT count(*) n FROM admin_accounts').get()!.n,2);
 });

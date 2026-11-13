@@ -1,3 +1,5 @@
+import { referralReasonSql } from './referral-reasons.ts';
+import { sameDeviceReferralSql } from './referral-eligibility.ts';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -17,7 +19,7 @@ export function openDatabase(filename: string) {
     db.exec(`PRAGMA foreign_keys = ${initialVersion > 0 && initialVersion < 26 ? 'OFF' : 'ON'};`);
     db.exec('BEGIN IMMEDIATE');
     const version = (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
-    if (version > 26) throw new Error('Database schema is newer than this server supports.');
+    if (version > 31) throw new Error('Database schema is newer than this server supports.');
     if (version === 0) {
       db.exec(`
         CREATE TABLE products (
@@ -432,6 +434,104 @@ export function openDatabase(filename: string) {
       db.prepare(`INSERT OR IGNORE INTO products(id,name,category,price_cents,selectable,sort_order,currency,period_months,presentation)
         VALUES (?,?,?,?,?,5,?,?,?)`).run(id,name,category,priceCents,Number(selectable),currency,periodMonths,JSON.stringify(presentation));
       db.exec('PRAGMA user_version=26;');
+    }
+    if(version<27){
+      db.exec(`CREATE TABLE IF NOT EXISTS payment_controls (
+        environment TEXT PRIMARY KEY CHECK(environment IN ('sandbox','production')),
+        enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),version INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL,updated_by TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS product_payment_controls (
+        environment TEXT NOT NULL CHECK(environment IN ('sandbox','production')),
+        product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),PRIMARY KEY(environment,product_id)
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS payment_control_events (
+        id INTEGER PRIMARY KEY,environment TEXT NOT NULL CHECK(environment IN ('sandbox','production')),
+        product_id TEXT,enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),actor TEXT NOT NULL,created_at TEXT NOT NULL
+      ) STRICT;
+      PRAGMA user_version=27;`);
+    }
+    if(version<28){
+      const active=db.prepare('SELECT id FROM products WHERE active=1 ORDER BY sort_order,id').all().map(row=>String(row.id));
+      if(active.includes('chatgpt-plus-account')){
+        const ordered=active.filter(id=>id!=='chatgpt-plus-account');
+        ordered.splice(Math.min(1,ordered.length),0,'chatgpt-plus-account');
+        const update=db.prepare('UPDATE products SET sort_order=? WHERE id=?');
+        ordered.forEach((id,index)=>update.run(index,id));
+      }
+      db.exec('PRAGMA user_version=28;');
+    }
+    if(version<29){
+      const columns=db.prepare('PRAGMA table_info(referral_orders)').all().map(row=>row.name);
+      if(!columns.includes('device_check_enabled'))db.exec('ALTER TABLE referral_orders ADD COLUMN device_check_enabled INTEGER NOT NULL DEFAULT 1 CHECK(device_check_enabled IN (0,1));');
+      if(!columns.includes('blocked_reason'))db.exec('ALTER TABLE referral_orders ADD COLUMN blocked_reason TEXT;');
+      db.exec(`UPDATE referral_orders SET device_check_enabled=0 WHERE status='earned';
+        DROP TRIGGER IF EXISTS referral_device_history;
+        CREATE INDEX IF NOT EXISTS customer_browsers_customer ON customer_browsers(customer_id,owner_hash);
+        CREATE TRIGGER referral_device_history AFTER INSERT ON customer_browsers BEGIN
+          UPDATE referral_orders SET status='cancelled',earned_at=NULL,blocked_reason='same_device'
+          WHERE device_check_enabled=1 AND status IN ('pending','earned')
+            AND ${sameDeviceReferralSql('referral_orders.inviter_id','(SELECT owner_hash FROM orders WHERE id=referral_orders.order_id)','referral_orders.buyer_id')};
+        END;
+        PRAGMA user_version=29;`);
+    }
+    if(version<30){
+      const columns=db.prepare('PRAGMA table_info(referral_orders)').all().map(row=>row.name);
+      if(!columns.includes('product_check_enabled'))db.exec('ALTER TABLE referral_orders ADD COLUMN product_check_enabled INTEGER NOT NULL DEFAULT 1 CHECK(product_check_enabled IN (0,1));');
+      db.exec(`UPDATE referral_orders SET product_check_enabled=0 WHERE status='earned';
+        UPDATE referral_orders SET status='cancelled',earned_at=NULL,blocked_reason='product_excluded'
+          WHERE product_check_enabled=1 AND order_id IN (SELECT id FROM orders WHERE json_extract(snapshot,'$.productId')='codex-sms');
+        DROP TRIGGER IF EXISTS referral_payment;
+        CREATE TRIGGER referral_payment AFTER UPDATE OF status ON orders BEGIN
+          UPDATE referral_orders SET
+            blocked_reason=CASE WHEN product_check_enabled=1 AND json_extract(NEW.snapshot,'$.productId')='codex-sms' THEN 'product_excluded' WHEN device_check_enabled=1 AND ${sameDeviceReferralSql('inviter_id','NEW.owner_hash','buyer_id')} THEN 'same_device' ELSE blocked_reason END,
+            status=CASE
+              WHEN blocked_reason IN ('same_device','product_excluded') OR (product_check_enabled=1 AND json_extract(NEW.snapshot,'$.productId')='codex-sms') OR (device_check_enabled=1 AND ${sameDeviceReferralSql('inviter_id','NEW.owner_hash','buyer_id')}) THEN 'cancelled'
+              WHEN NEW.status='paid' THEN CASE WHEN (SELECT COALESCE(SUM(amount_cents),0) FROM payment_refunds WHERE order_id=NEW.id AND status='success')>=json_extract(NEW.snapshot,'$.priceCents') THEN 'cancelled' ELSE 'earned' END
+              WHEN NEW.status='closed' THEN 'cancelled' ELSE 'pending' END,
+            earned_at=CASE WHEN blocked_reason IN ('same_device','product_excluded') OR (product_check_enabled=1 AND json_extract(NEW.snapshot,'$.productId')='codex-sms') OR (device_check_enabled=1 AND ${sameDeviceReferralSql('inviter_id','NEW.owner_hash','buyer_id')}) THEN NULL
+              WHEN NEW.status='paid' THEN COALESCE(earned_at,NEW.paid_at) ELSE earned_at END
+          WHERE order_id=NEW.id;
+        END;
+        PRAGMA user_version=30;`);
+    }
+    if(version<31){
+      const columns=db.prepare('PRAGMA table_info(referral_orders)').all().map(row=>row.name);
+      if(!columns.includes('reason_code'))db.exec("ALTER TABLE referral_orders ADD COLUMN reason_code TEXT NOT NULL DEFAULT 'awaiting_payment';");
+      if(!columns.includes('reason_updated_at'))db.exec('ALTER TABLE referral_orders ADD COLUMN reason_updated_at TEXT;');
+      db.exec(`CREATE TABLE IF NOT EXISTS referral_rejected_visits (
+          owner_hash TEXT PRIMARY KEY,inviter_id TEXT NOT NULL REFERENCES customers(id),expires_at INTEGER NOT NULL
+        ) STRICT;
+        CREATE TABLE IF NOT EXISTS referral_order_exclusions (
+          order_id TEXT PRIMARY KEY REFERENCES orders(id),inviter_id TEXT NOT NULL REFERENCES customers(id),
+          buyer_id TEXT REFERENCES customers(id),reason_code TEXT NOT NULL CHECK(reason_code IN ('self_invite','same_device','product_excluded','invitation_expired')),
+          created_at TEXT NOT NULL
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS referral_exclusions_inviter ON referral_order_exclusions(inviter_id,created_at);
+        DROP TRIGGER IF EXISTS referral_exclusion_unique;
+        CREATE TRIGGER referral_exclusion_unique BEFORE INSERT ON referral_order_exclusions
+          WHEN EXISTS(SELECT 1 FROM referral_orders WHERE order_id=NEW.order_id)
+          BEGIN SELECT RAISE(ABORT,'Referral already recorded'); END;
+        DROP TRIGGER IF EXISTS referral_reward_unique;
+        CREATE TRIGGER referral_reward_unique BEFORE INSERT ON referral_orders
+          WHEN EXISTS(SELECT 1 FROM referral_order_exclusions WHERE order_id=NEW.order_id)
+          BEGIN SELECT RAISE(ABORT,'Referral already excluded'); END;
+        DROP TRIGGER IF EXISTS referral_reason_insert;
+        CREATE TRIGGER referral_reason_insert AFTER INSERT ON referral_orders BEGIN
+          UPDATE referral_orders SET reason_code=${referralReasonSql('referral_orders')},reason_updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE order_id=NEW.order_id;
+        END;
+        DROP TRIGGER IF EXISTS referral_reason_update;
+        CREATE TRIGGER referral_reason_update AFTER UPDATE OF status,blocked_reason ON referral_orders BEGIN
+          UPDATE referral_orders SET reason_code=${referralReasonSql('referral_orders')},reason_updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+          WHERE order_id=NEW.order_id AND reason_code IS NOT ${referralReasonSql('referral_orders')};
+        END;
+        UPDATE referral_orders SET reason_code=${referralReasonSql('referral_orders')},reason_updated_at=coalesce(reason_updated_at,strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+        DROP VIEW IF EXISTS referral_report_records;
+        CREATE VIEW referral_report_records AS
+          SELECT order_id,inviter_id,amount_cents,status,created_at,earned_at,reason_code,reason_updated_at FROM referral_orders
+          UNION ALL SELECT order_id,inviter_id,0,'cancelled',created_at,NULL,reason_code,created_at FROM referral_order_exclusions;
+        PRAGMA user_version=31;`);
     }
     if (db.prepare('PRAGMA foreign_key_check').all().length) throw new Error('Database migration violated foreign keys.');
     db.exec('COMMIT');

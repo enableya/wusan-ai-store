@@ -1,4 +1,7 @@
 export type PaymentConfig = {
+  globallyPaused?: boolean;
+  gatewayEnabled?: boolean;
+  blockedProductIds?: string[];
   enabled: boolean;
   environment: 'sandbox' | 'production';
   message: string;

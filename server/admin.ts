@@ -4,7 +4,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { OrderError } from './orders.ts';
 import { dummyPasswordHash, hashPassword, verifyPassword } from './passwords.ts';
 import { adminPermissions, hasAdminPermission, impliedAdminPermissions } from '../src/types/admin.ts';
-import type { AdminAccount, AdminPermission, AdminRole, AdminSession } from '../src/types/admin.ts';
+import type { AdminAccount, AdminPermission, AdminRole, AdminSession, AdminCustomerList } from '../src/types/admin.ts';
 export { hashPassword as hashAdminPassword } from './passwords.ts';
 
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -86,6 +86,18 @@ export function adminRepository(db: DatabaseSync, origin: string) {
     session(request: IncomingMessage): AdminSession {
       const account = current(request);
       return account ? authenticated(account) : { configured: !!db.prepare('SELECT 1 FROM admin_accounts LIMIT 1').get(), authenticated: false };
+    },
+    listCustomers(params: URLSearchParams): AdminCustomerList {
+      const query=(params.get('q')||'').trim().toLowerCase(),pageText=params.get('page')||'1',page=Number(pageText);
+      if([...params.keys()].some(key=>!['q','page'].includes(key)||params.getAll(key).length!==1)
+        ||query.length>40||!/^\d+$/.test(pageText)||!Number.isSafeInteger(page)||page<1||page>100000)
+        throw new OrderError(400,'INVALID_CUSTOMER_FILTER','商城用户查询条件无效。');
+      const pattern='%'+query.replace(/[\\%_]/g,'\\$&')+'%';
+      const where="WHERE username LIKE ? ESCAPE '\\'";
+      const total=Number(db.prepare('SELECT count(*) n FROM customers '+where).get(pattern)!.n);
+      const users=db.prepare('SELECT id,username,created_at AS createdAt FROM customers '+where+' ORDER BY created_at DESC,id LIMIT 20 OFFSET ?')
+        .all(pattern,(page-1)*20) as AdminCustomerList['users'];
+      return {total,page,pageSize:20,users};
     },
     listAccounts() {
       return db.prepare(`SELECT ${accountFields} FROM admin_accounts ORDER BY created_at, username`).all().map(fromRow);

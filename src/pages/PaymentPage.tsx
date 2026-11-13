@@ -1,3 +1,4 @@
+import { usePaymentConfig } from '../hooks/usePaymentConfig';
 import { useMessage } from '../app/MessageProvider';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
@@ -11,7 +12,7 @@ import { SupportButton } from '../components/SupportButton';
 import { useApiResource } from '../hooks/useApiResource';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { postApi } from '../services/api';
-import type { Order, PaymentConfig } from '../types/orders';
+import type { Order } from '../types/orders';
 import { orderStatusLabel } from '../types/orders';
 import { formatDate, money } from '../lib/format';
 import './product-detail.css';
@@ -20,7 +21,7 @@ export default function PaymentPage() {
   const { orderRef } = useParams();
   usePageTitle('订单与支付');
   const resource = useApiResource<Order>(orderRef ? `/orders/${encodeURIComponent(orderRef)}` : null);
-  const config = useApiResource<PaymentConfig>('/payments/config');
+  const config = usePaymentConfig(resource.data?.productId);
   const [updated, setUpdated] = useState<Order | null>(null);
   const [busy, setBusy] = useState<'pay' | 'query' | null>(null);
   const [cancelling, setCancelling] = useState(false);
@@ -60,7 +61,7 @@ export default function PaymentPage() {
   }, []);
   // A return URL is only a reason to query; its untrusted parameters never mark an order paid.
   useEffect(() => {
-    if (!config.data?.enabled || order?.status !== 'pending' || cancelling) return;
+    if (!(config.data?.gatewayEnabled??config.data?.enabled) || order?.status !== 'pending' || cancelling) return;
     const controller = new AbortController();
     let attempts = 0;
     let timer: ReturnType<typeof setTimeout>;
@@ -70,7 +71,7 @@ export default function PaymentPage() {
     };
     void poll();
     return () => { controller.abort(); clearTimeout(timer); };
-  }, [config.data?.enabled, order?.status, orderRef, refresh, cancelling]);
+  }, [config.data?.enabled, config.data?.gatewayEnabled, order?.status, orderRef, refresh, cancelling]);
   async function pay() {
     if (!order || lock.current) return;
     lock.current = true; setBusy('pay');

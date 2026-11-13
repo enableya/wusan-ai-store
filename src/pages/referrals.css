@@ -36,3 +36,22 @@
 .referral-empty {text-align:center;padding:35px;color:#748097;font-size:16px}
 .referral-pagination {display:flex;align-items:center;justify-content:flex-end;gap:12px;padding-top:22px;font-size:14px}
 @media(max-width:760px){.referral-heading{align-items:flex-start;flex-direction:column}.referral-report{padding:14px}.referral-intro{padding:20px}.referral-pagination{flex-wrap:wrap}.referral-totals{gap:10px}.referral-totals>div{padding:14px}.referral-totals strong{font-size:26px}}
+
+.referral-report-note {font-size:14px;line-height:1.7;color:var(--muted,#637088);margin:0 0 18px}
+.referral-table td.referral-reason {min-width:250px;max-width:360px;white-space:normal;overflow-wrap:anywhere}
+.referral-reason p {margin:0;font-size:14px}
+.referral-reason small {font-size:12px}
+.referral-mock-actions {display:flex;gap:12px;flex-wrap:wrap;margin:20px 0}
+
+@media(max-width:760px){
+  .referral-table,.referral-table tbody {display:block}
+  .referral-table thead {position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  .referral-table tbody {display:grid;gap:14px}
+  .referral-table tbody tr {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;padding:16px;border:1px solid var(--line,#e1e8f3);border-radius:12px}
+  .referral-table td {display:block;padding:0;border:0;white-space:normal;min-width:0;overflow-wrap:anywhere}
+  .referral-table td[data-label]::before {content:attr(data-label);display:block;font-size:12px;font-weight:400;color:var(--muted,#637088);margin-bottom:5px}
+  .referral-table .referral-order,.referral-table .referral-inviter,.referral-table .referral-status-cell,.referral-table td.referral-reason,.referral-table .referral-created {grid-column:1/-1}
+  .referral-table td.referral-reason {min-width:0;max-width:none;padding-top:12px;border-top:1px solid var(--line,#e1e8f3)}
+  .referral-table .referral-created {font-size:12px;color:var(--muted,#637088)}
+  .referral-table .referral-created::before {display:inline;margin-right:8px}
+}

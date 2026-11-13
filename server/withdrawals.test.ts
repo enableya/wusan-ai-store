@@ -330,7 +330,7 @@ test('schema 20 preserves historical withdrawals and audit rows; confirmation ke
     assert.deepEqual(preserved,{...oldWithdrawal});
     assert.deepEqual(db.prepare('SELECT * FROM referral_withdrawal_events').all(),oldEvents);
     assert.deepEqual(db.prepare('SELECT * FROM orders').all(),oldOrders);
-    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version,26);
+    assert.equal(db.prepare('PRAGMA user_version').get()!.user_version,31);
     const gateway=createAlipayGateway({});
     const repository=withdrawalRepository(db,gateway);
     assert.throws(()=>repository.manualStart(id,'admin'),/仅审核通过/);

@@ -221,6 +221,8 @@ test('user management shows the list and supports adding, editing and deleting a
   await page.getByLabel('登录密码').fill('isolated-e2e-admin-password');
   await page.getByRole('button', { name: '登录后台' }).click();
   await page.getByRole('link', { name: '用户管理' }).click();
+  await expect(page.getByRole('tab',{name:'商城用户',exact:true})).toHaveAttribute('aria-selected','true');
+  await page.getByRole('tab',{name:'管理员',exact:true}).click();
   await expect(page.getByRole('table', { name: '管理员列表' })).toBeVisible();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await page.getByRole('button', { name: '新增管理员' }).click();
@@ -253,6 +255,7 @@ test('user management shows the list and supports adding, editing and deleting a
   await expect(page.getByRole('heading', { name: '登录管理后台' })).toBeVisible();
   await page.getByLabel('登录密码').fill('isolated-e2e-admin-password');
   await page.getByRole('button', { name: '登录后台' }).click();
+  await page.getByRole('tab',{name:'管理员',exact:true}).click();
   const remove = row.getByRole('button', { name: '删除 limited-admin' });
   await remove.click();
   await page.getByRole('dialog', { name: '删除管理员' }).getByRole('button', { name: '取消' }).click();
@@ -976,4 +979,99 @@ test('order management displays recharge status for paid and free orders and upd
     expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1)).toBe(false);
     await page.screenshot({path:`artifacts/admin-recharge-status-${width}.png`,fullPage:true});
   }
+});
+
+test('payment controls preserve product switches under a disabled master and update the storefront',async({page,browser})=>{
+  await page.goto('/admin?tab=payments');
+  await page.getByLabel('登录密码').fill('isolated-e2e-admin-password');
+  await page.getByRole('button',{name:'登录后台'}).click();
+  await page.getByRole('link',{name:'支付管理',exact:true}).click();
+  const master=page.getByRole('switch',{name:'支付总开关',exact:true});
+  const codex=page.getByRole('switch',{name:'Codex 接码支付开关',exact:true});
+  await expect(master).toHaveAttribute('aria-checked','true');
+  await expect(codex).toHaveAttribute('aria-checked','true');
+  await codex.click();await expect(codex).toHaveAttribute('aria-checked','false');
+  const shop=await browser.newPage();
+  await shop.goto('/products/codex-sms');
+  await expect(shop.getByRole('button',{name:'立即购买',exact:true})).toBeDisabled();
+  await expect(shop.locator('.payment-availability')).toContainText('该商品暂时关闭支付');
+  await master.click();await expect(master).toHaveAttribute('aria-checked','false');
+  await expect(codex).toHaveAttribute('aria-checked','false');
+  await expect(page.getByText('总开关已关闭，当前无法支付')).toHaveCount(6);
+  await shop.goto('/products/chatgpt-plus');
+  await expect(shop.getByRole('button',{name:'立即购买',exact:true})).toBeDisabled();
+  await expect(shop.locator('.payment-availability')).toContainText('全站支付已暂停');
+  for(const width of [390,1440]){
+    await page.setViewportSize({width,height:1000});
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1)).toBe(false);
+    await page.screenshot({path:`artifacts/payment-controls-${width}.png`,fullPage:true});
+  }
+  await master.click();await expect(master).toHaveAttribute('aria-checked','true');
+  await expect(codex).toHaveAttribute('aria-checked','false');
+  await page.reload();await expect(codex).toHaveAttribute('aria-checked','false');
+  await codex.click();await expect(codex).toHaveAttribute('aria-checked','true');
+  await shop.goto('/products/codex-sms');await expect(shop.getByRole('button',{name:'立即购买',exact:true})).toBeEnabled();
+  await shop.close();
+});
+
+test('user management defaults to shop users and separates the administrator tab',async({page})=>{
+  const db=openDatabase(process.env.E2E_ADMIN_DB!);
+  const add=db.prepare('INSERT INTO customers(id,username,password_hash,invite_code,created_at) VALUES (?,?,?,?,?)');
+  add.run('a'.repeat(32),'shop-only-account','never-display-this-password','a'.repeat(16),'2026-11-13T00:00:00Z');
+  add.run('b'.repeat(32),'admin','never-display-this-password','b'.repeat(16),'2026-11-13T00:00:00Z');db.close();
+  await page.goto('/admin?tab=users');
+  await page.getByLabel('登录密码').fill('isolated-e2e-admin-password');
+  await page.getByRole('button',{name:'登录后台'}).click();
+  const shop=page.getByRole('tab',{name:'商城用户',exact:true}),admins=page.getByRole('tab',{name:'管理员',exact:true});
+  await expect(shop).toHaveAttribute('aria-selected','true');
+  await expect(page.getByRole('table',{name:'商城用户列表'})).toContainText('shop-only-account');
+  await expect(page.getByRole('button',{name:'新增管理员'})).toHaveCount(0);
+  await expect(page.getByRole('tabpanel')).not.toContainText('never-display-this-password');
+  await page.getByRole('searchbox',{name:'搜索商城账号'}).fill('shop-only');await page.getByRole('button',{name:'查询',exact:true}).click();
+  await expect(page.getByRole('table',{name:'商城用户列表'}).locator('tbody tr')).toHaveCount(1);
+  await admins.click();await expect(page.getByRole('table',{name:'管理员列表'})).not.toContainText('shop-only-account');
+  await expect(page.getByRole('button',{name:'新增管理员'})).toBeVisible();
+  await admins.press('ArrowLeft');await expect(shop).toHaveAttribute('aria-selected','true');
+  for(const width of [390,1440]){
+    await page.setViewportSize({width,height:1000});
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1)).toBe(false);
+    await page.screenshot({path:`artifacts/user-management-tabs-${width}.png`});
+  }
+  await page.reload();await expect(shop).toHaveAttribute('aria-selected','true');
+});
+
+test('referral mock shows persisted reasons, actual versus expected credit and both user and admin views',async({page})=>{
+  const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+  await page.goto('/mock/referrals');
+  await expect(page.getByRole('heading',{name:'邀请返利原因预览'})).toBeVisible();
+  await expect(page.locator('.referral-table tbody tr')).toHaveCount(10);
+  await expect(page.getByRole('columnheader',{name:'原因 / 说明'})).toBeVisible();
+  await expect(page.locator('.referral-table')).toContainText('识别为同设备邀请');
+  await expect(page.locator('.referral-table')).toContainText('属于本人邀请');
+  await expect(page.locator('.referral-table')).toContainText('Codex 接码不参与邀请返利');
+  await expect(page.locator('.referral-table tbody tr').filter({hasText:'ChatGPT Plus（长期邀请）'})).toContainText('返利已入账');
+  await expect(page.locator('.referral-table')).not.toContainText('邀请归属的 30 天有效期');
+  await expect(page.locator('.referral-table')).toContainText('订单已全额退款');
+  await expect(page.locator('.referral-table')).toContainText('付款后预计 ¥5');
+  await expect(page.locator('.referral-amount').filter({hasText:'¥5'})).toHaveCount(3);
+  await expect(page.getByRole('columnheader',{name:'邀请人 / 邀请码'})).toHaveCount(0);
+  for(const width of [1440,390]){
+    await page.setViewportSize({width,height:1000});
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1)).toBe(false);
+    const reason=await page.locator('.referral-reason').first().boundingBox();
+    expect(reason!.x).toBeGreaterThanOrEqual(0);expect(reason!.x+reason!.width).toBeLessThanOrEqual(width+1);
+    await page.screenshot({path:`artifacts/referral-reasons-${width}.png`,fullPage:true});
+  }
+  await page.setViewportSize({width:1440,height:1000});
+  await page.getByRole('button',{name:'管理员视角',exact:true}).click();
+  await expect(page.getByRole('columnheader',{name:'邀请人 / 邀请码'})).toBeVisible();
+  await expect(page.locator('.referral-table tbody tr')).toHaveCount(10);
+  await page.getByRole('combobox',{name:'返利状态'}).click();
+  await page.getByRole('option',{name:'不计返利',exact:true}).click();
+  await expect(page.locator('.referral-table tbody tr')).toHaveCount(7);
+  await expect(page.locator('.referral-amount')).toHaveText(Array(7).fill('¥0'));
+  await page.getByRole('button',{name:'刷新',exact:true}).click();
+  await expect(page.locator('.referral-table tbody tr')).toHaveCount(7);
+  await page.reload();await expect(page.locator('.referral-table tbody tr')).toHaveCount(10);
+  expect(errors).toEqual([]);
 });

@@ -1,3 +1,4 @@
+import { paymentControls } from './payment-controls.ts';
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
@@ -21,6 +22,7 @@ import { hasAdminPermission, staffCheckoutUsername } from '../src/types/admin.ts
 export function createApiServer(db: DatabaseSync, gateway: PaymentGateway = createAlipayGateway(), options: { adminOrigin?: string; publicCheckoutEnabled?: boolean; fulfillmentMonitor?: boolean } = {}) {
   const catalog = catalogRepository(db);
   const orders = orderRepository(db, gateway);
+  const paymentSwitches = paymentControls(db,gateway.status.environment);
   const withdrawals = withdrawalRepository(db, gateway);
   const referrals = referralRepository(db, gateway.origin, gateway.status.environment);
   const admin = adminRepository(db, options.adminOrigin ?? process.env.ADMIN_ORIGIN ?? gateway.origin);
@@ -98,12 +100,12 @@ export function createApiServer(db: DatabaseSync, gateway: PaymentGateway = crea
           if (referrals.requireUser(request).id !== user.id) throw new OrderError(401, 'LOGIN_REQUIRED', '请重新登录。');
         }) });
       }
-      if (url.pathname === '/api/referrals/invitation' && reading) return send(200, { data: referrals.invitation(owner()) });
+      if (url.pathname === '/api/referrals/invitation' && reading) return send(200, { data: referrals.invitation(owner(),referrals.current(request)?.id) });
       if (url.pathname === '/api/referrals/visit' && request.method === 'POST') {
         rateLimit(`referral:${request.socket.remoteAddress}`, 60);
         const input = await readJson(request, gateway.origin);
         const browser = browserOwner(request, response, gateway, true)!;
-        return send(200, { data: referrals.visit(browser, input.code) });
+        return send(200, { data: referrals.visit(browser, input.code,referrals.current(request)?.id) });
       }
       if (url.pathname === '/api/referrals' && reading) return send(200, { data: referrals.report(url.searchParams, referrals.requireUser(request).id) });
       if (url.pathname === '/api/analytics/product-click' && request.method === 'POST') {
@@ -116,6 +118,16 @@ export function createApiServer(db: DatabaseSync, gateway: PaymentGateway = crea
           if (request.headers.origin !== (admin.origin || `http://${request.headers.host}`)) throw new OrderError(403, 'INVALID_ORIGIN', '请从本站管理页面操作。');
           return readJson(request, admin.origin, limit);
         };
+        if(url.pathname==='/api/admin/payments/settings'){
+          const actor=admin.requirePermission(request,'payments.manage');
+          if(reading)return send(200,{data:paymentSwitches.list()});
+          if(request.method==='POST'){
+            const input=await writeInput();
+            const current=admin.requirePermission(request,'payments.manage');
+            rateLimit(`payment-controls:${current.username}`,60);
+            return send(200,{data:paymentSwitches.update(input,current.username)});
+          }
+        }
         if (url.pathname === '/api/admin/session' && reading) return send(200, { data: admin.session(request) });
         if (url.pathname === '/api/admin/staff-checkout' && (reading || request.method === 'POST')) {
           const actor = admin.requirePermission(request, 'users.manage');
@@ -251,6 +263,10 @@ export function createApiServer(db: DatabaseSync, gateway: PaymentGateway = crea
             return send(200, { data: vouchers.removeCard(productId, Number(id), input) });
           }
         }
+        if(url.pathname==='/api/admin/customers' && reading){
+          admin.requirePermission(request,'users.manage');
+          return send(200,{data:admin.listCustomers(url.searchParams)});
+        }
         if (url.pathname === '/api/admin/users') {
           const actor = admin.requirePermission(request, 'users.manage');
           if (reading) return send(200, { data: admin.listAccounts() });
@@ -284,9 +300,9 @@ export function createApiServer(db: DatabaseSync, gateway: PaymentGateway = crea
       }
       if (url.pathname === '/api/payments/config' && reading) {
         browserOwner(request, response, gateway, true);
-        return send(200, { data: checkoutAllowed(request) ? gateway.status : {
+        return send(200, { data: paymentSwitches.publicStatus(checkoutAllowed(request) ? gateway.status : {
           ...gateway.status, enabled: false, message: '购买暂未开放，请稍后再来。',
-        } });
+        }) });
       }
       if (url.pathname === '/api/coupons/quote' && request.method === 'POST') {
         rateLimit(`coupon:${request.socket.remoteAddress}`, 30);
@@ -320,7 +336,7 @@ export function createApiServer(db: DatabaseSync, gateway: PaymentGateway = crea
           const key = request.headers['idempotency-key'];
           if (typeof key !== 'string') return fail(400, 'IDEMPOTENCY_KEY_REQUIRED', '缺少订单提交编号，请刷新后重试。');
           const browser = browserOwner(request, response, gateway, true)!;
-          return send(201, { data: await orders.create(browser, input, key, referrals.attribution(browser, referrals.current(request)?.id)) });
+          return send(201, { data: await orders.create(browser, input, key, referrals.orderAttribution(browser, referrals.current(request)?.id)) });
         }
       }
       const redemption = url.pathname.match(/^\/api\/orders\/(WS[0-9a-f]{20,60})\/redemption(?:\/(policy|preview|submit|refresh))?$/);

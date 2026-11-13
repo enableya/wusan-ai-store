@@ -1,6 +1,4 @@
 .storefront { padding: 30px 0 66px; background: linear-gradient(180deg, #f0f5ff 0, var(--page) 580px); min-height: 70vh; }
-.storefront-container { width: min(1360px, calc(100% - 80px)); }
-.storefront-header .header-inner { width: min(1360px,calc(100% - 80px)); }
 .storefront-hero { position: relative; overflow: hidden; padding: 38px 42px; border: 1px solid var(--line); border-radius: 20px; background: radial-gradient(ellipse at 100% 0%, #dce8ff 0, transparent 56%), linear-gradient(115deg, #fff 26%, #edf4ff 100%); }
 .storefront-hero-copy { position: relative; max-width: calc(100% - 250px); }
 .storefront-hero-logo { position: absolute; width: 168px; height: 168px; right: 64px; top: 50%; transform: translateY(-50%); object-fit: contain; color-scheme: light; }
@@ -55,7 +53,7 @@
 .storefront-empty h3 { font-size: 16px; margin-bottom: 8px; }
 .storefront-empty p { font-size: 12px; }
 .storefront-footer { border-top: 1px solid var(--line); background: var(--surface); color: var(--muted); }
-.storefront-footer > div { width: min(1360px,calc(100% - 80px)); display: flex; align-items: center; gap: 25px; padding-block: 23px; font-size: 10px; flex-wrap: wrap; }
+.storefront-footer > div { display: flex; align-items: center; gap: 25px; padding-block: 23px; font-size: 10px; flex-wrap: wrap; }
 .storefront-footer nav { display: flex; gap: 23px; margin-left: auto; }
 .storefront-footer a:hover { color: var(--green); }
 .storefront-footer small { font-size: 10px; }
@@ -66,10 +64,9 @@
 :root[data-theme='dark'] .storefront-hero-logo { color-scheme: dark; }
 @media(min-width:681px) and (max-width:1000px) { .storefront-hero-copy { max-width: calc(100% - 140px); } .storefront-hero-logo { width: 110px; height: 110px; right: 30px; } }
 @media(max-width:1200px) { .storefront-grid { grid-template-columns: repeat(3,minmax(0,1fr)); } .storefront-layout { grid-template-columns: 190px minmax(0,1fr); gap: 23px; } }
-@media(max-width:1000px) { .storefront-container,.storefront-header .header-inner { width: calc(100% - 48px); } .storefront-grid { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 17px; } .storefront-footer > div { width: calc(100% - 48px); } .storefront-hero { padding: 30px; } }
+@media(max-width:1000px) { .storefront-grid { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 17px; } .storefront-hero { padding: 30px; } }
 @media(max-width:680px) {
   .storefront { padding-top: 18px; padding-bottom: 34px; }
-  .storefront-container,.storefront-header .header-inner { width: calc(100% - 32px); }
   .storefront-hero { padding: 25px 22px; border-radius: 13px; }
   .storefront-hero-copy { max-width: none; }
   .storefront-hero-logo { width: 38px; height: 38px; right: 18px; top: 20px; transform: none; }
@@ -81,7 +78,7 @@
   .storefront-sidebar { width: 100%; position: static; padding: 0; border: 0; background: none; }
   .storefront-sidebar h2 { display: none; }
   .storefront-sidebar nav { flex-direction: row; gap: 6px; }
-  .storefront-sidebar button { justify-content: center; background: var(--surface); border: 1px solid var(--line); font-size: 11px; gap: 6px; padding: 8px; min-height: 40px; white-space: nowrap; }
+  .storefront-sidebar button { justify-content: center; background: var(--surface); border: 1px solid var(--line); font-size: 11px; gap: 6px; padding: 8px 5px; min-height: 40px; white-space: nowrap; }
   .storefront-sidebar button svg { display: none; }
   .storefront-sidebar button.selected { border-color: var(--primary); }
   .storefront-sidebar button small { margin-left: 0; font-size: 9px; }
@@ -106,7 +103,7 @@
   .storefront-buy-short { display: inline; }
   .storefront-buy-arrow { width: 18px; height: 18px; }
   .storefront-buy-arrow svg { width: 11px; height: 11px; }
-  .storefront-footer > div { width: calc(100% - 32px); gap: 13px; padding-block: 20px; }
+  .storefront-footer > div { gap: 13px; padding-block: 20px; }
   .storefront-footer nav { gap: 16px; }
   .storefront-footer small { width: 100%; font-size: 9px; }
 }

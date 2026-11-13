@@ -13,6 +13,7 @@ export const adminPermissions = {
   'vouchers.codes': '查看和复制卡密',
   'vouchers.delete': '删除卡密',
   'vouchers.import': '导入卡密',
+  'payments.manage': '管理支付开关',
   'checkout.test': '使用管理员支付联调',
 } as const;
 
@@ -68,3 +69,7 @@ export type AdminOrderList = {
     refundReview: OrderRefundReview | null;
   }[];
 };
+
+export type PaymentControls = { environment: 'sandbox'|'production'; enabled:boolean;version:number;updatedAt:string|null;updatedBy:string|null;products:{id:string;name:string;enabled:boolean}[] };
+
+export type AdminCustomerList = {total:number;page:number;pageSize:number;users:{id:string;username:string;createdAt:string}[]};

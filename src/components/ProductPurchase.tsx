@@ -1,3 +1,4 @@
+import { usePaymentConfig } from '../hooks/usePaymentConfig';
 import { useMessage } from '../app/MessageProvider';
 import { useCustomer } from '../app/CustomerProvider';
 import { useEffect, useRef, useState } from 'react';
@@ -11,11 +12,10 @@ import { AccountRedemption } from './AccountRedemption';
 import { CardDelivery } from './CardDelivery';
 import { PurchaseForm, PurchaseSummary } from './PurchaseForm';
 import type { CouponQuote } from './PurchaseForm';
-import { useApiResource } from '../hooks/useApiResource';
 import { postApi } from '../services/api';
 import { money } from '../lib/format';
 import type { Product } from '../types/catalog';
-import type { Order, PaymentConfig } from '../types/orders';
+import type { Order } from '../types/orders';
 
 
 function randomCode(previous = '') {
@@ -27,7 +27,7 @@ function randomCode(previous = '') {
 }
 
 export function ProductPurchase({ product }: { product: Product }) {
-  const payment = useApiResource<PaymentConfig>('/payments/config');
+  const payment = usePaymentConfig(product.id);
   const { user } = useCustomer();
   const [code, setCode] = useState(randomCode);
   const [answer, setAnswer] = useState('');
@@ -42,7 +42,7 @@ export function ProductPurchase({ product }: { product: Product }) {
   const sandbox = payment.data?.environment === 'sandbox';
   const staff = user?.staffCheckout === true;
   const currentOrder = order?.staffCheckout && !staff ? null : order;
-  const canOpenCheckout = selectable && (staff || sandbox || payment.data?.enabled === true);
+  const canOpenCheckout = selectable && (staff || (!payment.paused && (sandbox || payment.data?.enabled === true)));
 
   function renewCode() {
     setCode(randomCode(code)); setAnswer(''); setInvalidCode(false);
@@ -88,8 +88,8 @@ export function ProductPurchase({ product }: { product: Product }) {
         {creating ? '正在创建订单…' : currentOrder ? '查看订单进度' : '立即购买'}<Icon name="arrow-right" />
       </button>
       {!selectable && <p className="field-hint payment-availability">商品暂未开放购买。</p>}
-      {selectable && !currentOrder && !staff && !payment.data?.enabled && <p className="field-hint payment-availability">
-        {payment.loading ? '正在确认支付状态…' : payment.error ? null : sandbox ? '可预览购买流程，付款需启用支付宝沙箱。' : '支付宝收款暂未开放。'}
+      {selectable && !currentOrder && !staff && (!payment.data?.enabled || payment.paused) && <p className="field-hint payment-availability">
+        {payment.loading ? '正在确认支付状态…' : payment.error ? null : payment.paused ? payment.data?.message : sandbox ? '可预览购买流程，付款需启用支付宝沙箱。' : '支付宝收款暂未开放。'}
         {payment.error && <button type="button" className="text-button" onClick={payment.reload}>重试</button>}
       </p>}
     </form>
@@ -100,6 +100,7 @@ export function ProductPurchase({ product }: { product: Product }) {
 export function PurchaseDialog({ product, open, onClose, order, onOrder }: {
   product: Product; open: boolean; onClose: () => void; order: Order | null; onOrder: (order: Order) => void;
 }) {
+  const payment = usePaymentConfig(order?.productId||product.id,open);
   const dialog = useRef<HTMLDialogElement>(null);
   const [qr, setQr] = useState('');
   const [qrLoading, setQrLoading] = useState(false);
@@ -123,7 +124,7 @@ export function PurchaseDialog({ product, open, onClose, order, onOrder }: {
   }, [open]);
 
   async function loadQr(order: Order) {
-    if (qrLock.current) return;
+    if (qrLock.current || payment.paused) return;
     qrLock.current = true; setQrLoading(true); setQrFailed(false);
     try {
       const result = await postApi<{ paymentUrl: string }>(`/orders/${order.id}/payment-qr`, {});
@@ -214,7 +215,7 @@ export function PurchaseDialog({ product, open, onClose, order, onOrder }: {
         <header><img src="/brand/alipay.svg" alt="" width="28" height="28" /><h3>支付宝支付</h3>
           {pending && remaining > 0 && <time>{Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, '0')}</time>}
         </header>
-        {pending && remaining > 0 ? <>
+        {payment.paused ? <p role="status">{payment.data?.message}</p> : pending && remaining > 0 ? <>
           <div className="purchase-qr-content">
             {qr && <iframe className="purchase-qr-frame" src={qr} title="支付宝付款二维码" />}
             <div><p>应付金额</p><strong>¥{money(order.priceCents)}</strong>

@@ -1,3 +1,6 @@
+import { referralReasonMessages } from './referral-reasons.ts';
+import type { ReferralReason, ReferralReportData } from '../src/types/referrals.ts';
+import { isSameDeviceReferral } from './referral-eligibility.ts';
 import { randomBytes } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
@@ -23,23 +26,31 @@ export function referralRepository(db: DatabaseSync, origin: string, environment
     if (!user) throw new OrderError(401, 'LOGIN_REQUIRED', '请先登录商城账号。');
     return user;
   }
-  function invitation(owner: string | null) {
+  function invitation(owner: string | null, buyerId?: string) {
     if (!owner) return null;
-    const row = db.prepare(`SELECT c.invite_code AS code, v.expires_at AS expiresAt
+    const row = db.prepare(`SELECT c.invite_code AS code, v.inviter_id AS inviterId
       FROM referral_visits v JOIN customers c ON c.id = v.inviter_id
-      WHERE v.owner_hash = ? AND v.expires_at > ?
+      WHERE v.owner_hash = ?
       AND NOT EXISTS (SELECT 1 FROM customer_browsers b WHERE b.owner_hash = v.owner_hash AND b.customer_id = v.inviter_id)`)
-      .get(owner, Date.now());
-    return row ? { code: String(row.code), expiresAt: Number(row.expiresAt) } : null;
+      .get(owner);
+    return row && !isSameDeviceReferral(db,owner,String(row.inviterId),buyerId) ? { code: String(row.code), expiresAt: null } : null;
   }
   function attribution(owner: string, buyerId?: string) {
-    const row = db.prepare(`SELECT v.inviter_id FROM referral_visits v WHERE owner_hash = ? AND expires_at > ?
+    const row = db.prepare(`SELECT v.inviter_id FROM referral_visits v WHERE owner_hash = ?
       AND NOT EXISTS (SELECT 1 FROM customer_browsers b WHERE b.owner_hash = v.owner_hash AND b.customer_id = v.inviter_id)`)
-      .get(owner, Date.now());
-    return row && row.inviter_id !== buyerId ? { inviterId: String(row.inviter_id), buyerId: buyerId ?? null } : undefined;
+      .get(owner);
+    return row && !isSameDeviceReferral(db,owner,String(row.inviter_id),buyerId) ? { inviterId: String(row.inviter_id), buyerId: buyerId ?? null } : undefined;
+  }
+  function orderAttribution(owner: string, buyerId?: string) {
+    // Rejected invitations remain available for explanations; accepted attribution always wins.
+    const row = db.prepare(`SELECT inviter_id FROM (
+      SELECT inviter_id,1 AS accepted FROM referral_visits WHERE owner_hash=?
+      UNION ALL SELECT inviter_id,0 FROM referral_rejected_visits WHERE owner_hash=?
+    ) ORDER BY accepted DESC LIMIT 1`).get(owner,owner);
+    return row ? {inviterId:String(row.inviter_id),buyerId:buyerId??null} : undefined;
   }
   return {
-    current, requireUser, attribution, invitation,
+    current, requireUser, attribution, invitation, orderAttribution,
     async authenticate(request: IncomingMessage, response: ServerResponse, owner: string, input: Record<string, unknown>, register: boolean) {
       const username = typeof input.username === 'string' ? input.username.trim().toLowerCase() : '';
       const password = typeof input.password === 'string' ? input.password : '';
@@ -68,33 +79,49 @@ export function referralRepository(db: DatabaseSync, origin: string, environment
       cookie(response, '', 0);
       return { success: true };
     },
-    visit(owner: string, code: unknown) {
-      if (typeof code !== 'string' || !/^[a-f0-9]{16}$/.test(code)) return { accepted: false, invitation: invitation(owner) };
+    visit(owner: string, code: unknown, buyerId?:string) {
+      if (typeof code !== 'string' || !/^[a-f0-9]{16}$/.test(code)) return { accepted: false, invitation: invitation(owner,buyerId) };
       const inviter = db.prepare('SELECT id FROM customers WHERE invite_code = ?').get(code);
-      if (!inviter || db.prepare('SELECT 1 FROM customer_browsers WHERE owner_hash = ? AND customer_id = ?').get(owner, inviter.id)) return { accepted: false, invitation: invitation(owner) };
-      // First valid invitation lasts 30 days; subsequent links cannot replace attribution.
-      db.prepare(`INSERT INTO referral_visits VALUES (?, ?, ?) ON CONFLICT(owner_hash) DO UPDATE SET
-        inviter_id = excluded.inviter_id, expires_at = excluded.expires_at WHERE referral_visits.expires_at <= ?`)
-        .run(owner, inviter.id, Date.now() + 30 * 86400000, Date.now());
-      return { accepted: true, invitation: invitation(owner) };
+      if (!inviter) return { accepted: false, invitation: invitation(owner,buyerId) };
+      if (isSameDeviceReferral(db,owner,String(inviter.id),buyerId)) {
+        if (!db.prepare('SELECT 1 FROM referral_visits WHERE owner_hash=?').get(owner)) {
+          db.prepare('INSERT OR IGNORE INTO referral_rejected_visits(owner_hash,inviter_id,expires_at) VALUES (?,?,0)').run(owner,inviter.id);
+        }
+        return { accepted: false, invitation: invitation(owner,buyerId) };
+      }
+      // The first valid invitation is permanent; legacy expiry values are no longer consulted.
+      // Keep the old NOT NULL column for data compatibility, using 0 for new permanent bindings.
+      db.prepare('INSERT OR IGNORE INTO referral_visits(owner_hash,inviter_id,expires_at) VALUES (?,?,0)').run(owner,inviter.id);
+      db.prepare('DELETE FROM referral_rejected_visits WHERE owner_hash=?').run(owner);
+      return { accepted: true, invitation: invitation(owner,buyerId) };
     },
-    report(params: URLSearchParams, inviterId?: string) {
+    report(params: URLSearchParams, inviterId?: string): ReferralReportData {
       const status = params.get('status') || 'all';
       const page = Number(params.get('page') || 1);
       if (!['pending','earned','cancelled','all'].includes(status)
         || !Number.isSafeInteger(page) || page < 1 || page > 100000) throw new OrderError(400, 'INVALID_FILTER', '筛选条件无效。');
+      const now = new Date().toISOString();
+      db.prepare(`UPDATE referral_orders SET reason_code='payment_expired',reason_updated_at=?
+        WHERE status='pending' AND blocked_reason IS NULL AND reason_code='awaiting_payment'
+          AND (? IS NULL OR inviter_id=?) AND order_id IN (SELECT id FROM orders WHERE environment=? AND expires_at<=?)`)
+        .run(now,inviterId??null,inviterId??null,environment,now);
       const where = `WHERE (? IS NULL OR r.inviter_id = ?) AND o.environment = ? AND
         (? = 'all' OR (CASE WHEN r.status = 'pending' AND o.expires_at <= ? THEN 'cancelled' ELSE r.status END) = ?)`;
-      const now = new Date().toISOString();
       const args = [inviterId ?? null, inviterId ?? null, environment, status, now, status];
-      const from = `FROM referral_orders r JOIN orders o ON o.id = r.order_id JOIN customers c ON c.id = r.inviter_id`;
-      const totals = db.prepare(`SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN r.status = 'earned' THEN r.amount_cents ELSE 0 END),0) AS earnedCents ${from} ${where}`).get(...args);
+      const from = `FROM referral_report_records r JOIN orders o ON o.id = r.order_id JOIN customers c ON c.id = r.inviter_id`;
+      const totals = db.prepare(`SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN r.status = 'earned' THEN r.amount_cents ELSE 0 END),0) AS earnedCents ${from} ${where}`).get(...args) as { total: number; earnedCents: number };
       const rows = db.prepare(`SELECT r.order_id AS orderId, ${inviterId ? "substr(r.order_id,1,5) || '…' || substr(r.order_id,-6)" : 'r.order_id'} AS displayOrderId,
         c.username AS inviter, c.invite_code AS inviteCode, json_extract(o.snapshot,'$.productName') AS productName,
-        json_extract(o.snapshot,'$.priceCents') AS orderCents, r.amount_cents AS amountCents, o.environment,
+        json_extract(o.snapshot,'$.priceCents') AS orderCents, CASE WHEN r.status='earned' THEN r.amount_cents ELSE 0 END AS amountCents,
+        CASE WHEN r.status='pending' AND o.expires_at>? THEN r.amount_cents ELSE 0 END AS expectedAmountCents, o.environment,
         CASE WHEN r.status = 'pending' AND o.expires_at <= ? THEN 'cancelled' ELSE r.status END AS status,
-        r.created_at AS createdAt, r.earned_at AS earnedAt ${from} ${where} ORDER BY r.created_at DESC, r.order_id DESC LIMIT 20 OFFSET ?`)
-        .all(now, ...args, (page - 1) * 20).map(row => inviterId ? { ...row, orderId: row.displayOrderId } : row);
+        r.created_at AS createdAt,r.earned_at AS earnedAt,r.reason_code AS reasonCode,r.reason_updated_at AS reasonUpdatedAt ${from} ${where} ORDER BY r.created_at DESC, r.order_id DESC LIMIT 20 OFFSET ?`)
+        .all(now,now,...args,(page-1)*20).map(row => {
+          const reasonCode = row.reasonCode as ReferralReason;
+          const ineligibleReason = reasonCode==='same_device' ? '同设备邀请，不计返利' : reasonCode==='product_excluded' ? '该商品不参与返利' : null;
+          return {...row,...(inviterId?{orderId:row.displayOrderId}:{}),reasonCode,
+            reasonMessage:referralReasonMessages[reasonCode]??referralReasonMessages.ineligible,ineligibleReason};
+        }) as ReferralReportData['rows'];
       return { ...totals, page, pageSize: 20, rows };
     },
   };
